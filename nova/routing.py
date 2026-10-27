@@ -110,9 +110,12 @@ def request_tags(body: dict | None) -> tuple[list[str], str]:
 # --------------------------------------------------------------------------- #
 
 class LockoutRegistry:
-    """Lockouts are disabled per operator choice — no candidate is ever
-    locked out, so every provider and model stays in the pool regardless
-    of previous failures. Methods are preserved for call-site compatibility.
+    """Per-(provider, model) backoff after repeated failures.
+
+    `threshold` consecutive failures lock a pair out; each further failure past
+    the threshold doubles the window (base → max) so a genuinely broken upstream
+    backs off exponentially instead of being retried on every request. A single
+    success clears the record, so a recovered provider rejoins immediately.
     """
 
     def __init__(self, threshold: int = DEFAULT_LOCKOUT_THRESHOLD,
@@ -130,29 +133,60 @@ class LockoutRegistry:
 
     # -- queries ----------------------------------------------------------- #
     def is_locked(self, provider: str, model: str, now_ms: int | None = None) -> bool:
-        # Lockouts disabled — never report locked.
-        return False
+        now = _now_ms() if now_ms is None else int(now_ms)
+        with self._lock:
+            entry = self._entries.get(self.key(provider, model))
+        return entry is not None and int(entry.get("until", 0)) > now
 
     def remaining_ms(self, provider: str, model: str, now_ms: int | None = None) -> int:
-        return 0
+        now = _now_ms() if now_ms is None else int(now_ms)
+        with self._lock:
+            entry = self._entries.get(self.key(provider, model))
+        if entry is None:
+            return 0
+        return max(0, int(entry.get("until", 0)) - now)
 
     def report(self, now_ms: int | None = None) -> list[dict[str, Any]]:
-        """Everything currently locked out — always empty (lockouts disabled)."""
-        return []
+        """Every entry that is still cooling down, longest window first."""
+        now = _now_ms() if now_ms is None else int(now_ms)
+        out: list[dict[str, Any]] = []
+        with self._lock:
+            entries = list(self._entries.items())
+        for k, e in entries:
+            until = int(e.get("until", 0))
+            if until <= now:
+                continue
+            provider, _, model = k.partition("::")
+            out.append({
+                "provider": provider, "model": model,
+                "failure_count": int(e.get("failures", 0)),
+                "until_ms": until,
+                "remaining_ms": until - now,
+                "reason": e.get("reason", ""),
+            })
+        out.sort(key=lambda r: r["remaining_ms"], reverse=True)
+        return out
 
     def active_failures(self) -> dict[str, int]:
-        """Failure counts that still matter — always empty (lockouts disabled)."""
-        return {}
+        """Failure counts for entries that are still cooling down."""
+        return {LockoutRegistry.key(r["provider"], r["model"]): r["failure_count"]
+                for r in self.report()}
 
     # -- mutations --------------------------------------------------------- #
     def record_failure(self, provider: str, model: str, reason: str = "") -> int:
-        # Record failure count for reporting but never lock out.
+        """Count one failure; return how long the pair is now locked (0 = not yet)."""
         key = self.key(provider, model)
+        now = _now_ms()
         with self._lock:
             entry = self._entries.setdefault(key, {"failures": 0, "until": 0, "reason": ""})
             entry["failures"] = int(entry.get("failures", 0)) + 1
             entry["reason"] = (reason or entry.get("reason", ""))[:200]
-        return 0  # never locked
+            failures = entry["failures"]
+            if failures < self.threshold:
+                return 0
+            window = min(self.base_ms * (2 ** (failures - self.threshold)), self.max_ms)
+            entry["until"] = now + window
+            return window
 
     def record_success(self, provider: str, model: str) -> None:
         with self._lock:
@@ -236,10 +270,13 @@ def load_policies(raw: Any) -> list[dict[str, Any]]:
 
 
 def evaluate_policies(policies: Sequence[dict[str, Any]], model: str) -> dict[str, Any]:
-    """Policy evaluation — block_model access policies are disabled per operator choice.
+    """Policy evaluation — returns the verdict plus what each policy contributed.
 
-    All models are allowed through. Routing and budget policies still apply
-    (preferred providers, token caps), but no model is ever refused by a policy.
+    An access policy carrying `block_model` refuses the request outright when
+    the requested model matches one of its globs (or its `model_pattern`); the
+    verdict then names the policy, so the gateway answers 403 instead of quietly
+    serving the request from another provider. Routing and budget policies only
+    accumulate (preferred providers, the tightest token cap).
     """
     verdict: dict[str, Any] = {
         "allowed": True,
@@ -258,8 +295,13 @@ def evaluate_policies(policies: Sequence[dict[str, Any]], model: str) -> dict[st
         if kind == "routing":
             verdict["preferred_providers"].extend(policy.get("prefer_provider") or [])
         elif kind == "access":
-            # access policies are parsed but never block — all models are allowed
-            pass
+            blocks = [b for b in (policy.get("block_model") or []) if b]
+            hit = any(glob_match(b, model) for b in blocks) or (bool(pattern) and not blocks)
+            if hit:
+                verdict["allowed"] = False
+                verdict["reason"] = f"Blocked by the access policy '{policy.get('name', '')}'"
+                verdict["applied"].append(str(policy.get("name", "")))
+                continue
         elif kind == "budget":
             tokens = policy.get("max_tokens")
             if tokens is not None:
@@ -340,9 +382,10 @@ def has_fallback(chains: dict[str, list[dict[str, Any]]], model: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 class ClientLockouts:
-    """Failed-auth throttling — disabled per operator choice.
+    """Sliding-window throttle for failed client authentications.
 
-    No client is ever throttled. Methods preserved for call-site compatibility.
+    `max_attempts` failures inside `window_ms` lock the identifier for
+    `duration_ms`; a successful auth clears the history.
     """
 
     def __init__(self, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
@@ -352,22 +395,60 @@ class ClientLockouts:
         self.duration_ms = max(1, int(duration_ms))
         self.window_ms = max(1, int(window_ms))
         self._attempts: dict[str, list[int]] = {}
+        self._locked_until: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def check(self, identifier: str) -> dict[str, Any]:
-        return {"locked": False, "attempts": 0}
+        now = _now_ms()
+        with self._lock:
+            until = int(self._locked_until.get(identifier, 0))
+            self._prune(identifier, now)
+            attempts = len(self._attempts.get(identifier, ()))
+        if until > now:
+            return {"locked": True, "attempts": attempts, "retry_after_ms": until - now}
+        return {"locked": False, "attempts": attempts}
 
     def is_locked(self, identifier: str) -> bool:
-        return False
+        return self.check(identifier)["locked"]
 
     def record_failure(self, identifier: str) -> dict[str, Any]:
-        return {"locked": False, "attempts": 0}
+        now = _now_ms()
+        with self._lock:
+            self._prune(identifier, now)
+            attempts = self._attempts.setdefault(identifier, [])
+            attempts.append(now)
+            locked = len(attempts) >= self.max_attempts
+            if locked:
+                self._locked_until[identifier] = now + self.duration_ms
+                attempts.clear()
+        return {"locked": locked, "attempts": self.max_attempts if locked else len(attempts)}
 
     def record_success(self, identifier: str) -> None:
-        pass
+        with self._lock:
+            self._attempts.pop(identifier, None)
+            self._locked_until.pop(identifier, None)
 
     def reset(self, identifier: str | None = None) -> None:
-        pass
+        with self._lock:
+            if identifier is None:
+                self._attempts.clear()
+                self._locked_until.clear()
+            else:
+                self._attempts.pop(identifier, None)
+                self._locked_until.pop(identifier, None)
+
+    def _prune(self, identifier: str, now: int) -> None:
+        cutoff = now - self.window_ms
+        attempts = self._attempts.get(identifier)
+        if attempts:
+            kept = [t for t in attempts if t > cutoff]
+            if kept:
+                self._attempts[identifier] = kept
+            else:
+                self._attempts.pop(identifier, None)
+        until = self._locked_until.get(identifier)
+        if until is not None and until <= now:
+            self._locked_until.pop(identifier, None)
 
 
 # --------------------------------------------------------------------------- #

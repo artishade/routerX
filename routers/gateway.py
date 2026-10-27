@@ -53,10 +53,19 @@ from nova.discovery import aggregate_discovery, discover_provider_models
 from nova.models import ClientKey, Model as ModelRow, ModelRoute, Provider, RequestLog
 from nova.provider_transport import (
     anthropic_headers, anthropic_to_openai, anthropic_url, openai_to_anthropic,
-    extract_forward_headers, response_json_dict,
+    extract_forward_headers, forward_response_headers, response_json_dict,
 )
 
 log = logging.getLogger("nova.gateway")
+
+
+class HTTPError(Exception):
+    """A failed request stage with the HTTP status the client should receive."""
+
+    def __init__(self, status: int, detail: str):
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
 
 router = APIRouter()
 
@@ -444,18 +453,18 @@ async def attempt_upstream(row: ModelRow, messages: list[dict], temperature: flo
             json=openai_to_anthropic(row.modelId, messages, body) if native else body,
         )
         if res.status_code < 200 or res.status_code >= 300:
-            log.info("upstream %s/%s returned HTTP %s", provider.key, row.modelId, res.status_code)
+            log.info("upstream %s/%s returned HTTP %s", provider.id, row.modelId, res.status_code)
             return None
         if "text/event-stream" in (res.headers.get("content-type") or "").lower():
             # Some OpenAI-compatible proxies stream even when `stream` is absent.
             # Parsing that as JSON used to raise ValueError → HTTP 500.
             log.warning("upstream %s/%s streamed a 2xx to a non-stream request — next stage",
-                        provider.key, row.modelId)
+                        provider.id, row.modelId)
             return None
         payload = response_json_dict(res)
         if payload is None:
             log.warning("upstream %s/%s returned a non-JSON 2xx body — trying the next stage",
-                        provider.key, row.modelId)
+                        provider.id, row.modelId)
             return None
         if native:
             normalized = anthropic_to_openai(payload)
@@ -488,10 +497,10 @@ async def attempt_upstream(row: ModelRow, messages: list[dict], temperature: flo
             },
         }
     except httpx.HTTPError as err:
-        log.info("upstream %s/%s transport failed: %s", provider.key, row.modelId, err)
+        log.info("upstream %s/%s transport failed: %s", provider.id, row.modelId, err)
         return None
     except Exception as err:  # noqa: BLE001 — one bad provider must never 500 the request
-        log.warning("upstream %s/%s raised %s: %s", provider.key, row.modelId,
+        log.warning("upstream %s/%s raised %s: %s", provider.id, row.modelId,
                     err.__class__.__name__, err)
         return None
 
@@ -734,8 +743,10 @@ def auto_standins(db: Session, requested: str, seen: set[str],
     rows = db.scalars(
         select(ModelRow)
         .where(ModelRow.enabled.is_(True))
+        .join(Provider, ModelRow.providerId == Provider.id)
         .options(joinedload(ModelRow.provider))
-        .order_by(ModelRow.provider.priority, ModelRow.latencyMs.asc(), ModelRow.id.asc())
+        .where(Provider.enabled.is_(True))
+        .order_by(Provider.priority, ModelRow.latencyMs.asc(), ModelRow.id.asc())
     ).unique().all()
     picked: list[ModelRow] = []
     for m in rows:
@@ -988,11 +999,7 @@ async def pipeline_nonstream(db: Session, requested: str, messages: list[dict], 
         raise HTTPError(502, f"All routing stages failed: engine response error ({err.__class__.__name__})") from err
 
 
-class HTTPError(Exception):
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
+async def pipeline_stream(
 
 
 # --------------------------------------------------------------------------- #
