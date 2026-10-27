@@ -42,6 +42,7 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from nova import engine as nova_engine
@@ -52,7 +53,7 @@ from nova.discovery import aggregate_discovery, discover_provider_models
 from nova.models import ClientKey, Model as ModelRow, ModelRoute, Provider, RequestLog
 from nova.provider_transport import (
     anthropic_headers, anthropic_to_openai, anthropic_url, openai_to_anthropic,
-    extract_forward_headers,
+    extract_forward_headers, response_json_dict,
 )
 
 log = logging.getLogger("nova.gateway")
@@ -113,9 +114,20 @@ THINK_OPEN_RE = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
 
 
 def strip_think_blocks(text: str | None) -> str | None:
-    """Remove <think>...</think> blocks (including unclosed trailing <think>)."""
+    """Remove  thinking...</think> blocks (including unclosed trailing  thinking).
+
+    Coerces non-string upstream content (some providers return a list of text
+    parts) so callers never crash on an unusual but valid payload shape.
+    """
     if not text:
         return text
+    if isinstance(text, list):
+        text = "\n".join(
+            str(part.get("text", "")) for part in text
+            if isinstance(part, dict) and "text" in part
+        )
+    elif not isinstance(text, str):
+        text = str(text)
     # Remove complete blocks
     cleaned = THINK_BLOCK_RE.sub("", text)
     # If an opening <think> remains without closing, drop it and everything after
@@ -220,6 +232,10 @@ def normalize_messages(raw: list[dict]) -> list[dict]:
                 entry["tool_call_id"] = m["tool_call_id"]
             out.append(entry)
             continue
+        # `developer` is OpenAI's newer spelling of the system role; mapping it
+        # to `user` would silently demote Codex/OpenAI-SDK instructions.
+        if role == "developer":
+            role = "system"
         role = role if role in ("system", "assistant", "user") else "user"
         content = m.get("content")
         if content is None:
@@ -251,11 +267,13 @@ def extract_upstream_content(payload: Any) -> str | None:
         if not isinstance(choices, list) or not choices:
             return None
         msg = choices[0]["message"]
+        if not isinstance(msg, dict):
+            return None
         # tool_calls response has no content but has tool_calls -> treat as success
         if msg.get("tool_calls"):
             return "__tool_calls__"  # sentinel so caller knows it is tool call
         content = msg.get("content")
-    except (KeyError, TypeError, IndexError):
+    except (KeyError, TypeError, IndexError, AttributeError):
         return None
     if content is None:
         return None
@@ -309,7 +327,9 @@ def find_model(db: Session, id_or_exposed: str) -> ModelRow | None:
         select(ModelRow)
         .where((ModelRow.exposedId == id_or_exposed) | (ModelRow.modelId == id_or_exposed))
         .options(joinedload(ModelRow.provider))
-        .order_by(ModelRow.id)
+        # Prefer an enabled row when the same model id is exposed by several
+        # providers; otherwise a disabled duplicate would shadow the live one.
+        .order_by(ModelRow.enabled.desc(), ModelRow.id)
     ).first()
 
 
@@ -379,7 +399,7 @@ async def attempt_upstream(row: ModelRow, messages: list[dict], temperature: flo
     provider = row.provider
     if not provider or not provider.enabled or provider.kind in ("builtin", "gemini"):
         return None
-    base = provider.baseUrl.rstrip("/")
+    base = (provider.baseUrl or "").rstrip("/")
     if not base or base.startswith("internal://"):
         return None
 
@@ -417,23 +437,38 @@ async def attempt_upstream(row: ModelRow, messages: list[dict], temperature: flo
         native = provider.kind == "anthropic"
         res = await NONSTREAM_CLIENT.post(
             anthropic_url(base) if native else f"{base}/chat/completions",
-            headers=anthropic_headers(key_info["apiKey"], forward=forward_headers) if native else
-                    {"Content-Type": "application/json", "Authorization": f"Bearer {key_info['apiKey']}"},
+            headers=({**anthropic_headers(key_info["apiKey"], forward=forward_headers),
+                      "Accept": "application/json"} if native else
+                     {"Content-Type": "application/json", "Accept": "application/json",
+                      "Authorization": f"Bearer {key_info['apiKey']}"}),
             json=openai_to_anthropic(row.modelId, messages, body) if native else body,
         )
         if res.status_code < 200 or res.status_code >= 300:
+            log.info("upstream %s/%s returned HTTP %s", provider.key, row.modelId, res.status_code)
             return None
-        payload = res.json()
+        if "text/event-stream" in (res.headers.get("content-type") or "").lower():
+            # Some OpenAI-compatible proxies stream even when `stream` is absent.
+            # Parsing that as JSON used to raise ValueError → HTTP 500.
+            log.warning("upstream %s/%s streamed a 2xx to a non-stream request — next stage",
+                        provider.key, row.modelId)
+            return None
+        payload = response_json_dict(res)
+        if payload is None:
+            log.warning("upstream %s/%s returned a non-JSON 2xx body — trying the next stage",
+                        provider.key, row.modelId)
+            return None
         if native:
             normalized = anthropic_to_openai(payload)
-            if normalized is None:
+            if not isinstance(normalized, dict):
                 return None
             return {**normalized, "upstream_model": row.modelId,
                     "upstream_exposed_id": row.exposedId, "provider_name": provider.name,
                     "provider_id": provider.id, "via": "upstream-anthropic",
                     "upstream_headers": forward_response_headers(res)}
         content = extract_upstream_content(payload)
-        if content is None:
+        if content in (None, ""):
+            # Empty 2xx completions are a provider symptom, not an answer: let
+            # the next stage serve the agent instead of returning a blank turn.
             return None
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
         upstream_msg = extract_upstream_message(payload)
@@ -452,7 +487,12 @@ async def attempt_upstream(row: ModelRow, messages: list[dict], temperature: flo
                 "completion_tokens": usage.get("completion_tokens"),
             },
         }
-    except httpx.HTTPError:
+    except httpx.HTTPError as err:
+        log.info("upstream %s/%s transport failed: %s", provider.key, row.modelId, err)
+        return None
+    except Exception as err:  # noqa: BLE001 — one bad provider must never 500 the request
+        log.warning("upstream %s/%s raised %s: %s", provider.key, row.modelId,
+                    err.__class__.__name__, err)
         return None
 
 
@@ -504,7 +544,7 @@ async def attempt_upstream_stream(row: ModelRow, messages: list[dict], temperatu
     key_info = await asyncio.to_thread(select_upstream_key_sync, provider.id)
     if key_info is None:
         raise UpstreamFailure("no enabled key")
-    base = provider.baseUrl.rstrip("/")
+    base = (provider.baseUrl or "").rstrip("/")
     if not base or base.startswith("internal://"):
         raise UpstreamFailure("no base url")
 
@@ -514,13 +554,17 @@ async def attempt_upstream_stream(row: ModelRow, messages: list[dict], temperatu
     try:
         req = client.build_request(
             "POST", anthropic_url(base) if native else f"{base}/chat/completions",
-            headers=anthropic_headers(key_info["apiKey"], forward=forward_headers) if native else
-                    {"Content-Type": "application/json", "Authorization": f"Bearer {key_info['apiKey']}"},
+            headers=({**anthropic_headers(key_info["apiKey"], forward=forward_headers),
+                      "Accept": "text/event-stream"} if native else
+                     {"Content-Type": "application/json", "Accept": "text/event-stream",
+                      "Authorization": f"Bearer {key_info['apiKey']}"}),
             json=openai_to_anthropic(row.modelId, messages, body, stream=True) if native else body,
         )
         res = await client.send(req, stream=True)
     except httpx.HTTPError as err:
         raise UpstreamFailure(f"connect failed: {err}") from err
+    except Exception as err:  # noqa: BLE001 — never let provider setup crash the stream
+        raise UpstreamFailure(f"request setup failed: {err.__class__.__name__}") from err
 
     if res.status_code < 200 or res.status_code >= 300:
         await res.aclose()
@@ -539,32 +583,47 @@ async def attempt_upstream_stream(row: ModelRow, messages: list[dict], temperatu
                     chunk = json.loads(data)
                 except Exception:
                     continue
+                if not isinstance(chunk, dict):
+                    continue
                 if native:
                     event = chunk.get("type")
                     if event == "content_block_start":
-                        block = chunk.get("content_block") or {}
+                        block = chunk.get("content_block") if isinstance(chunk.get("content_block"), dict) else {}
                         if block.get("type") == "tool_use":
                             index = len(tool_indices)
-                            tool_indices[chunk.get("index", index)] = index
+                            upstream_index = chunk.get("index", index)
+                            if not isinstance(upstream_index, (int, str)):
+                                upstream_index = index
+                            tool_indices[upstream_index] = index
                             yield {"text": "", "finish_reason": None, "tool_calls": [{"index": index,
                                 "id": block.get("id"), "type": "function", "function": {"name": block.get("name"), "arguments": ""}}]}
                     elif event == "content_block_delta":
-                        delta = chunk.get("delta") or {}
-                        if delta.get("type") == "text_delta" and delta.get("text"):
+                        delta = chunk.get("delta") if isinstance(chunk.get("delta"), dict) else {}
+                        idx = chunk.get("index")
+                        if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str) and delta["text"]:
                             yield {"text": delta["text"], "finish_reason": None, "tool_calls": None}
-                        elif delta.get("type") == "input_json_delta" and chunk.get("index") in tool_indices:
-                            yield {"text": "", "finish_reason": None, "tool_calls": [{"index": tool_indices[chunk["index"]],
-                                "function": {"arguments": delta.get("partial_json") or ""}}]}
+                        elif (delta.get("type") == "input_json_delta"
+                              and isinstance(idx, (int, str)) and idx in tool_indices):
+                            yield {"text": "", "finish_reason": None, "tool_calls": [{"index": tool_indices[idx],
+                                 "function": {"arguments": delta.get("partial_json") or ""}}]}
                     elif event == "message_delta":
-                        reason = (chunk.get("delta") or {}).get("stop_reason")
-                        if reason:
+                        delta = chunk.get("delta") if isinstance(chunk.get("delta"), dict) else {}
+                        reason = delta.get("stop_reason")
+                        if isinstance(reason, str) and reason:
                             yield {"text": "", "finish_reason": {"end_turn": "stop", "tool_use": "tool_calls", "max_tokens": "length"}.get(reason, reason), "tool_calls": None}
                     continue
-                choices = chunk.get("choices") or []
-                if not choices:
+                choices = chunk.get("choices")
+                if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                     continue
-                delta = choices[0].get("delta") or {}
+                delta = choices[0].get("delta") if isinstance(choices[0].get("delta"), dict) else {}
                 text = delta.get("content")
+                if isinstance(text, list):
+                    text = "\n".join(
+                        str(part.get("text", "")) for part in text
+                        if isinstance(part, dict) and "text" in part
+                    )
+                elif text is not None and not isinstance(text, str):
+                    text = str(text)
                 finish = choices[0].get("finish_reason")
                 tool_calls_delta = delta.get("tool_calls")
                 if text or finish or tool_calls_delta:
@@ -746,17 +805,21 @@ def _pipeline_rows(db: Session, requested: str,
 
     rows: list[ModelRow] = []
     direct = find_model(db, requested)
-    if direct is not None:
+    # A disabled model must never be dispatched, even when it is the requested
+    # id or appears in an explicit route. Auto stand-ins already filter this;
+    # the direct/chain paths used to bypass the Models tab toggle.
+    if direct is not None and direct.enabled:
         rows.append(direct)
     for cid in chain_ids:
         row = find_model(db, cid)
-        if row is not None:
+        if row is not None and row.enabled:
             rows.append(row)
 
     # Auto stand-ins — every other healthy, enabled provider joins the chain
     # after the explicit fallbacks (opt out per route with auto=0).
     route = _effective_route(db, requested)
-    if route.auto if route is not None else True:
+    auto_enabled = True if route is None or route.auto is None else bool(route.auto)
+    if auto_enabled:
         rows.extend(auto_standins(db, requested, seen))
     return rows
 
@@ -847,10 +910,31 @@ def persist_lockouts(db: Session, force: bool = False) -> None:
     router_settings.save_lockouts(db, nova_routing.LOCKOUTS)
 
 
-async def pipeline_nonstream(db: Session, requested: str, messages: list[dict], temperature: float | None, original_body: dict | None = None, forward_headers: dict[str, str] | None = None):
-    """Returns (result_dict, stage, plan) — walking the router's ordering."""
+async def pipeline_nonstream(db: Session, requested: str, messages: list[dict], temperature: float | None,
+                             original_body: dict | None = None, forward_headers: dict[str, str] | None = None,
+                             precomputed: tuple[list[ModelRow], dict] | None = None):
+    """Returns (result_dict, stage, plan) — walking the router's ordering.
+
+    `precomputed` lets the Anthropic adapter reuse the exact plan it already
+    resolved (so a native passthrough decision and the fallback chain cannot
+    disagree under a stateful strategy). Any unexpected failure is translated
+    into an ``HTTPError`` (502/503) so an agent client receives a well-formed
+    gateway error instead of a bare 500.
+    """
     started = now_ms()
-    rows, plan = route_request(db, requested, original_body)
+    if precomputed is not None:
+        rows, plan = precomputed
+    else:
+        try:
+            rows, plan = route_request(db, requested, original_body)
+        except HTTPError:
+            raise
+        except SQLAlchemyError as err:
+            log.exception("routing failed on a database error")
+            raise HTTPError(503, "Gateway database unavailable — retry shortly") from err
+        except Exception as err:  # noqa: BLE001
+            log.exception("routing failed")
+            raise HTTPError(502, f"Gateway routing failed: {err.__class__.__name__}") from err
     stage = 0
     for row in rows:
         stage += 1
@@ -871,6 +955,8 @@ async def pipeline_nonstream(db: Session, requested: str, messages: list[dict], 
         completion = await nova_engine.chat(
             messages, tools=tools, tool_choice=tool_choice, model=requested
         )
+        if isinstance(completion, dict) and completion.get("error"):
+            raise nova_engine.EngineUnavailable(str(completion.get("error")))
         engine_meta = completion.get("_nova") if isinstance(completion, dict) else None
         engine_meta = engine_meta if isinstance(engine_meta, dict) else {}
         choice: dict = {}
@@ -897,6 +983,9 @@ async def pipeline_nonstream(db: Session, requested: str, messages: list[dict], 
         }, stage, plan
     except nova_engine.EngineUnavailable as err:
         raise HTTPError(502, f"All routing stages failed: {err}") from err
+    except Exception as err:  # noqa: BLE001 — malformed engine payload must not 500
+        log.exception("RouterX Free engine returned an unusable response")
+        raise HTTPError(502, f"All routing stages failed: engine response error ({err.__class__.__name__})") from err
 
 
 class HTTPError(Exception):
@@ -916,7 +1005,12 @@ async def list_models(request: Request, discover: str = "", provider: str = "", 
 
     with SessionLocal() as db:
         if discover in ("1", "true"):
-            results = await discover_provider_models(db, provider.strip() or None)
+            try:
+                results = await discover_provider_models(db, provider.strip() or None)
+            except Exception as err:  # noqa: BLE001 — discovery must not 500 the catalogue
+                log.exception("live model discovery failed")
+                return JSONResponse({"error": f"Model discovery failed: {err.__class__.__name__}"},
+                                    status_code=502)
             summary = aggregate_discovery(results)
             if free in ("1", "true"):
                 summary["data"] = [m for m in summary["data"] if m.get("is_free")]
@@ -932,7 +1026,7 @@ async def list_models(request: Request, discover: str = "", provider: str = "", 
 
         data = []
         for m in rows:
-            if not m.provider.enabled:
+            if m.provider is None or not m.provider.enabled:
                 continue
             # Exposure allow/deny globs gate advertisement here AND dispatch in
             # nova.routing — one predicate, both chokepoints, so a hidden model
@@ -1007,6 +1101,14 @@ async def chat_completions(request: Request):
                       status=err.status, latency_ms=now_ms() - started, via="nova-engine",
                       error=err.message)
             return JSONResponse({"error": err.message}, status_code=err.status)
+        except Exception as err:  # noqa: BLE001 — last line of defence, never a bare 500
+            log.exception("unhandled error in /v1/chat/completions")
+            write_log(db, model=requested, upstream_model="nova-engine",
+                      provider_name="RouterX Free Engine", endpoint="/v1/chat/completions",
+                      status=502, latency_ms=now_ms() - started, via="nova-engine",
+                      error=f"{err.__class__.__name__}: {err}")
+            return JSONResponse({"error": f"Gateway failed to serve the request ({err.__class__.__name__})"},
+                                status_code=502)
         persist_lockouts(db)
 
         completion_text = strip_think_blocks(result.get("content") or "") or ""
@@ -1069,6 +1171,12 @@ async def _chat_stream_response(requested: str, messages: list[dict], temperatur
                                        "code": err.status}})
             yield b"data: [DONE]\n\n"
             return
+        except Exception as err:  # noqa: BLE001
+            log.exception("stream routing failed")
+            yield sse_chunk({"error": {"message": f"Gateway routing failed: {err.__class__.__name__}",
+                                       "type": "gateway_error", "code": 502}})
+            yield b"data: [DONE]\n\n"
+            return
         stage = 0
         for row in rows:
             stage += 1
@@ -1077,6 +1185,10 @@ async def _chat_stream_response(requested: str, messages: list[dict], temperatur
             except UpstreamFailure as err:
                 note_attempt(row, False, err.detail)
                 log.info("stream stage %s failed: %s", stage, err)
+                continue
+            except Exception as err:  # noqa: BLE001
+                note_attempt(row, False, f"{err.__class__.__name__}: {err}")
+                log.warning("stream stage %s crashed: %s: %s", stage, err.__class__.__name__, err)
                 continue
 
             # Probe the first delta before committing — heartbeats keep the
@@ -1178,21 +1290,21 @@ async def _chat_stream_response(requested: str, messages: list[dict], temperatur
                         served["provider_name"] = engine_meta.get("provider") or served["provider_name"]
                     if chunk.get("error"):
                         raise nova_engine.EngineUnavailable(str(chunk.get("error", "engine error")))
-                    choices = chunk.get("choices") or []
+                    choices = chunk.get("choices")
                     text = ""
-                    if choices:
-                        delta = choices[0].get("delta") or {}
+                    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                        delta = choices[0].get("delta") if isinstance(choices[0].get("delta"), dict) else {}
                         text = delta.get("content") or ""
                         tool_calls_delta = delta.get("tool_calls")
-                        if tool_calls_delta:
+                        if isinstance(tool_calls_delta, list) and tool_calls_delta:
                             engine_tool_calls.extend(tool_calls_delta)
                             yield sse_chunk({**base_chunk(), "choices": [{"index": 0, "delta": {"tool_calls": tool_calls_delta}, "finish_reason": None}]})
                         if choices[0].get("finish_reason"):
                             finish_reason_val = choices[0]["finish_reason"]
                         if not text:
-                            msg = (choices[0].get("message") or {})
+                            msg = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
                             text = msg.get("content") or ""
-                    if text:
+                    if isinstance(text, str) and text:
                         filtered = think_filter.feed(text)
                         if filtered:
                             assembled.append(filtered)
@@ -1205,6 +1317,19 @@ async def _chat_stream_response(requested: str, messages: list[dict], temperatur
                 msg = f"All routing stages failed: {err}. Fix checklist: (1) Dashboard → Providers → Test your provider; (2) Dashboard → Models → Sync models; (3) request a model id that exists there (e.g. \"routerx/air\")."
                 yield sse_chunk({"error": {"message": msg, "type": "gateway_error", "code": 502}})
                 yield b"data: [DONE]\n\n"
+            except Exception as err:  # noqa: BLE001
+                log.exception("RouterX Free engine stream failed")
+                yield sse_chunk({"error": {"message": f"All routing stages failed: engine response error ({err.__class__.__name__})",
+                                           "type": "gateway_error", "code": 502}})
+                yield b"data: [DONE]\n\n"
+    except Exception as err:  # noqa: BLE001 — headers are already sent; emit a clean SSE error
+        log.exception("unhandled error in /v1/chat/completions stream")
+        try:
+            yield sse_chunk({"error": {"message": f"Gateway stream failed: {err.__class__.__name__}",
+                                       "type": "gateway_error", "code": 502}})
+            yield b"data: [DONE]\n\n"
+        except Exception:
+            pass
     finally:
         content = "".join(assembled)
         persist_lockouts(db)
@@ -1306,13 +1431,23 @@ async def _legacy_stream(requested: str, prompt: str, temperature, started: int)
     served = {"upstream_model": "nova-engine", "provider_name": "RouterX Free Engine", "via": "nova-engine", "stage": 0}
     legacy_think = ThinkStreamFilter()
     try:
-        rows = resolve_pipeline(db, requested)
+        try:
+            rows = resolve_pipeline(db, requested)
+        except Exception as err:  # noqa: BLE001 — keep the SSE contract on routing failures
+            log.exception("legacy stream routing failed")
+            yield sse_chunk({"error": {"message": f"Gateway routing failed: {err.__class__.__name__}",
+                                       "type": "gateway_error", "code": 502}})
+            yield b"data: [DONE]\n\n"
+            return
         stage = 0
         for row in rows:
             stage += 1
             try:
                 stream, provider_name, upstream_model = await attempt_upstream_stream(row, messages, temperature)
             except UpstreamFailure:
+                continue
+            except Exception as err:  # noqa: BLE001
+                log.warning("legacy stream stage %s crashed: %s", stage, err)
                 continue
             pieces = _iterate_with_heartbeat(stream, b": routerx-keepalive\n\n")
             first = None
@@ -1400,6 +1535,19 @@ async def _legacy_stream(requested: str, prompt: str, temperature, started: int)
             except nova_engine.EngineUnavailable as err:
                 yield sse_chunk({"error": {"message": f"All routing stages failed: {err}", "type": "gateway_error", "code": 502}})
                 yield b"data: [DONE]\n\n"
+            except Exception as err:  # noqa: BLE001
+                log.exception("RouterX Free engine legacy stream failed")
+                yield sse_chunk({"error": {"message": f"All routing stages failed: engine response error ({err.__class__.__name__})",
+                                           "type": "gateway_error", "code": 502}})
+                yield b"data: [DONE]\n\n"
+    except Exception as err:  # noqa: BLE001 — headers already sent
+        log.exception("unhandled error in /v1/completions stream")
+        try:
+            yield sse_chunk({"error": {"message": f"Gateway stream failed: {err.__class__.__name__}",
+                                       "type": "gateway_error", "code": 502}})
+            yield b"data: [DONE]\n\n"
+        except Exception:
+            pass
     finally:
         if assembled:
             write_log(db, model=requested, upstream_model=served["upstream_model"],
@@ -1438,22 +1586,21 @@ async def embeddings(request: Request):
 
     with SessionLocal() as db:
         row = find_model(db, requested)
-        if row is None or row.provider is None or not row.provider.enabled:
+        if row is None or not row.enabled or row.provider is None or not row.provider.enabled:
             return JSONResponse({
-                "error": f"Model '{requested}' is not configured. Sync models in the dashboard or pick one from GET /v1/models.",
+                "error": f"Model '{requested}' is not configured or is disabled. Sync models in the dashboard or pick one from GET /v1/models.",
             }, status_code=404)
         provider = row.provider
         key_info = await asyncio.to_thread(select_upstream_key_sync, provider.id)
-        base = provider.baseUrl.rstrip("/")
+        base = (provider.baseUrl or "").rstrip("/")
 
         if provider.kind == "openai" and key_info and base and not base.startswith("internal://"):
             try:
-                async with httpx.AsyncClient(timeout=NONSTREAM_READ_TIMEOUT) as client:
-                    res = await client.post(
-                        f"{base}/embeddings",
-                        headers={"Authorization": f"Bearer {key_info['apiKey']}", "Content-Type": "application/json"},
-                        json={"model": row.modelId, "input": inputs},
-                    )
+                res = await NONSTREAM_CLIENT.post(
+                    f"{base}/embeddings",
+                    headers={"Authorization": f"Bearer {key_info['apiKey']}", "Content-Type": "application/json"},
+                    json={"model": row.modelId, "input": inputs},
+                )
             except httpx.HTTPError as err:
                 write_log(db, model=requested, provider_name=provider.name, endpoint="/v1/embeddings",
                           status=502, latency_ms=now_ms() - started, error=str(err))
@@ -1464,7 +1611,10 @@ async def embeddings(request: Request):
                           error=f"upstream HTTP {res.status_code}")
                 return JSONResponse({"error": f"Upstream returned HTTP {res.status_code} for embeddings"},
                                     status_code=502)
-            data = res.json()
+            data = response_json_dict(res)
+            if data is None:
+                return JSONResponse({"error": "Upstream returned a non-JSON 2xx body for embeddings"},
+                                    status_code=502)
             write_log(db, model=requested, upstream_model=row.modelId, provider_name=provider.name,
                       endpoint="/v1/embeddings", status=200, latency_ms=now_ms() - started,
                       tokens_in=estimate_tokens(" ".join(inputs)), tokens_out=0, via="upstream",
@@ -1484,10 +1634,14 @@ async def embeddings(request: Request):
                             return JSONResponse(
                                 {"error": f"Upstream returned HTTP {res.status_code} for embeddings"},
                                 status_code=502)
-                        values = res.json().get("embedding", {}).get("values", [])
+                        payload = response_json_dict(res) or {}
+                        embedding = payload.get("embedding") if isinstance(payload.get("embedding"), dict) else {}
+                        values = embedding.get("values", [])
                         vectors.append({"object": "embedding", "index": i, "embedding": values})
-            except httpx.HTTPError as err:
-                return JSONResponse({"error": f"Upstream embeddings call failed: {err}"}, status_code=502)
+            except httpx.HTTPError:
+                # Never echo the exception: the Gemini URL carries the API key.
+                return JSONResponse({"error": "Upstream embeddings call failed (connection error)"},
+                                    status_code=502)
             write_log(db, model=requested, upstream_model=row.modelId, provider_name=provider.name,
                       endpoint="/v1/embeddings", status=200, latency_ms=now_ms() - started,
                       tokens_in=estimate_tokens(" ".join(inputs)), tokens_out=0, via="upstream",

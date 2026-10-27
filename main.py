@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -28,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRouter
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 
 from nova import engine as nova_engine
 from maintenance import periodic_maintenance
@@ -157,6 +159,10 @@ async def gateway_request_log(request: Request, call_next):
     path = request.url.path
     if not path.startswith(GATEWAY_PREFIXES):
         return await call_next(request)
+    # A stable id on every gateway response makes a hosted failure traceable
+    # from the agent's error message to the server log without guessing.
+    request_id = (request.headers.get("x-request-id") or uuid.uuid4().hex)[:32]
+    request.state.request_id = request_id
     started = time.time()
     body_snip = ""
     if path.endswith("/messages") or path.endswith("/count_tokens"):
@@ -174,8 +180,10 @@ async def gateway_request_log(request: Request, call_next):
             body_snip = "<body read failed>"
     response = await call_next(request)
     dur_ms = int((time.time() - started) * 1000)
+    response.headers["x-request-id"] = request_id
     line = (f"{request.client.host if request.client else '-'} "
-            f"{request.method} {path} -> {response.status_code} {dur_ms}ms")
+            f"{request.method} {path} -> {response.status_code} {dur_ms}ms "
+            f"request_id={request_id}")
     if body_snip:
         line += f" | {body_snip}"
     if response.status_code >= 400:
@@ -191,6 +199,36 @@ async def gateway_request_log(request: Request, call_next):
     except Exception:
         pass
     return response
+
+
+@app.exception_handler(Exception)
+async def gateway_unhandled_exception(request: Request, exc: Exception):
+    """Last-resort handler: gateway clients must never see a bare HTTP 500.
+
+    Upstream/provider faults are handled inside the gateway; this catches
+    anything that still escapes (schema drift, programming errors, DB outages)
+    and answers in the client's own protocol shape with a request id.
+    """
+    path = request.url.path
+    request_id = getattr(request.state, "request_id", "") or uuid.uuid4().hex[:32]
+    if isinstance(exc, SQLAlchemyError):
+        status, reason = 503, "Gateway database unavailable — retry shortly"
+    elif isinstance(exc, asyncio.TimeoutError):
+        status, reason = 504, "Gateway timed out waiting for a stage"
+    else:
+        status, reason = 502, f"Gateway internal error ({exc.__class__.__name__})"
+
+    if path.startswith(GATEWAY_PREFIXES):
+        log.exception("unhandled gateway error on %s %s (request_id=%s)", request.method, path, request_id)
+        message = f"{reason}. request_id={request_id}"
+        if path.endswith("/messages") or path.endswith("/count_tokens"):
+            body = {"type": "error", "error": {"type": "api_error", "message": message}}
+        else:
+            body = {"error": {"message": message, "type": "gateway_error", "code": status}}
+        return JSONResponse(body, status_code=status, headers={"x-request-id": request_id})
+
+    log.exception("unhandled error on %s %s (request_id=%s)", request.method, path, request_id)
+    return JSONResponse({"error": "Internal Server Error", "request_id": request_id}, status_code=500)
 
 
 # --------------------------------------------------------------------------- #

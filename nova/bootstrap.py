@@ -23,7 +23,9 @@ import json
 import logging
 import os
 
-from sqlalchemy import func, select
+from sqlalchemy import (
+    Boolean, DateTime, Float, Integer, Numeric, String, Text, func, inspect, select, text,
+)
 from sqlalchemy.orm import Session
 
 from .catalog import providers as catalog_providers
@@ -66,8 +68,95 @@ GPU_CATALOGUE = [
 
 
 def create_schema() -> None:
-    """Create missing tables only — never drops, never alters existing data."""
+    """Create missing tables only — never drops, never destroys existing data."""
     Base.metadata.create_all(bind=engine)
+
+
+def sync_schema_columns() -> list[str]:
+    """Add columns that exist in `nova.models` but not in an existing table.
+
+    `create_all` creates missing TABLES but never ALTERs an existing one. An
+    upgraded deployment could therefore keep an old `ModelRoute` table without
+    `.auto` or a `Provider` without `.kind`: `/v1/models` still works (it only
+    reads `Provider`/`Model`), while every inference request fails with a DB
+    error — exactly the "discovery works, inference returns 500" symptom.
+    This is the additive half of the schema sync: missing columns are added with
+    a constant default; no row is read, rewritten or deleted.
+    """
+    added: list[str] = []
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        # Case-insensitive: PostgreSQL folds unquoted identifiers, and a
+        # case-only difference must never be treated as a missing column (that
+        # would add a duplicate "baseUrl" next to an existing "baseurl").
+        existing = {str(col["name"]).lower() for col in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name.lower() in existing:
+                continue
+            ddl = _add_column_sql(table.name, column)
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+            except Exception as err:  # noqa: BLE001 — boot must never fail on one column
+                log.warning("schema sync: could not add %s.%s: %s", table.name, column.name, err)
+                continue
+            added.append(f"{table.name}.{column.name}")
+            log.warning("schema sync: added missing column %s.%s (additive, no rows touched)",
+                        table.name, column.name)
+    return added
+
+
+def _add_column_sql(table_name: str, column) -> str:
+    preparer = engine.dialect.identifier_preparer
+    col_type = column.type.compile(dialect=engine.dialect)
+    ddl = (f"ALTER TABLE {preparer.quote(table_name)} "
+           f"ADD COLUMN {preparer.quote(column.name)} {col_type}")
+    default = _column_default_sql(column)
+    return f"{ddl} DEFAULT {default}" if default is not None else ddl
+
+
+def _column_default_sql(column) -> str | None:
+    """Constant SQL default for a newly added column.
+
+    NOT NULL is deliberately omitted: old rows must stay valid, and SQLite
+    refuses non-constant defaults in ALTER TABLE (CURRENT_TIMESTAMP). A constant
+    default backfills existing NULL-free reads and new writes still come from
+    the model's Python default.
+    """
+    server_default = column.server_default
+    if server_default is not None:
+        arg = getattr(server_default, "arg", None)
+        if isinstance(arg, str):
+            return arg
+        arg_text = getattr(arg, "text", None)
+        if isinstance(arg_text, str):
+            return arg_text
+    default = column.default
+    if default is not None and not getattr(default, "is_callable", False):
+        value = getattr(default, "arg", None)
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                value = None
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str):
+            return "'" + value.replace("'", "''") + "'"
+    if isinstance(column.type, Boolean):
+        return "FALSE"
+    if isinstance(column.type, (Integer, Float, Numeric)):
+        return "0"
+    if isinstance(column.type, DateTime):
+        return "'1970-01-01 00:00:00'"
+    if isinstance(column.type, (String, Text)):
+        return "''"
+    return None
 
 
 def bootstrap_minimum(db: Session) -> None:
@@ -233,8 +322,10 @@ def _seed_gpu_catalogue(db: Session) -> None:
 
 def run_bootstrap() -> None:
     create_schema()
+    sync_schema_columns()
     with Session(engine) as db:
         bootstrap_minimum(db)
 
 
-__all__ = ["run_bootstrap", "create_schema", "ensure_registry_catalogue", "ALL_TABLES"]
+__all__ = ["run_bootstrap", "create_schema", "sync_schema_columns",
+           "ensure_registry_catalogue", "ALL_TABLES"]

@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from nova.provider_transport import (
     anthropic_headers, anthropic_url, native_anthropic_body, forward_response_headers,
-    extract_forward_headers,
+    extract_forward_headers, response_json_dict,
 )
 
 router = APIRouter()
@@ -117,14 +117,20 @@ def anthropic_messages_to_openai(payload: dict) -> tuple[list[dict], str | None]
             elif joined:
                 msgs.append({"role": "assistant", "content": joined})
         else:  # user
-            if joined:
-                msgs.append({"role": "user", "content": joined})
+            # OpenAI requires tool messages immediately after the assistant
+            # tool_calls turn, before any new user text. Emit tool_result blocks
+            # first so an agent turn cannot produce an invalid message order.
             for t in tool_results:
                 msgs.append({
                     "role": "tool",
-                    "tool_call_id": str(t.get("tool_call_id") or ""),
+                    # Anthropic names this field `tool_use_id`; `tool_call_id` is
+                    # the OpenAI spelling. Read both so tool results keep their
+                    # pairing on every fallback provider.
+                    "tool_call_id": str(t.get("tool_use_id") or t.get("tool_call_id") or ""),
                     "content": _block_text(t),
                 })
+            if joined:
+                msgs.append({"role": "user", "content": joined})
     return msgs, system_text
 
 
@@ -249,10 +255,21 @@ async def anthropic_messages(request: Request):
     openai_tools = anthropic_tools_to_openai(payload.get("tools"))
     openai_tool_choice = anthropic_tool_choice_to_openai(payload.get("tool_choice"))
     pipeline_body = dict(payload)
+    # Only OpenAI-shaped tools belong in the fallback request. Leaving Anthropic
+    # server-tool definitions (bash/web_search/...) here makes every OpenAI
+    # fallback answer 400, which burns the whole chain on an avoidable error.
     if openai_tools:
         pipeline_body["tools"] = openai_tools
-        if openai_tool_choice is not None:
-            pipeline_body["tool_choice"] = openai_tool_choice
+    else:
+        pipeline_body.pop("tools", None)
+    if openai_tools and openai_tool_choice is not None:
+        pipeline_body["tool_choice"] = openai_tool_choice
+    else:
+        pipeline_body.pop("tool_choice", None)
+    # Anthropic spells it `stop_sequences`; OpenAI-compatible upstreams use `stop`.
+    if "stop_sequences" in pipeline_body and "stop" not in pipeline_body:
+        pipeline_body["stop"] = pipeline_body["stop_sequences"]
+    pipeline_body.pop("stop_sequences", None)
 
     from nova.database import SessionLocal
 
@@ -270,15 +287,38 @@ async def anthropic_messages(request: Request):
         )
 
     with SessionLocal() as db:
-        plan: dict = {}
-        # Stage 0: native Anthropic passthrough when the resolved provider speaks Anthropic.
-        native = await _try_native_anthropic(db, requested, payload, openai_msgs, system_text, max_tokens, temperature,
-                                              forward_headers=fw_headers)
+        # Resolve the plan once: the native passthrough and the fallback chain
+        # must both obey the exact same routing decision.
+        try:
+            rows, plan = gw.route_request(db, requested, pipeline_body)
+        except gw.HTTPError as err:
+            gw.write_log(db, model=requested, upstream_model="nova-engine",
+                         provider_name="RouterX Free Engine", endpoint="/v1/messages",
+                         status=err.status, latency_ms=gw.now_ms() - started, via="nova-engine",
+                         error=err.message)
+            return JSONResponse({"type": "error", "error": {"type": "api_error", "message": err.message}},
+                                status_code=err.status)
+        except Exception as err:  # noqa: BLE001 — never surface an agent call as a bare 500
+            gw.log.exception("routing failed in /v1/messages")
+            return JSONResponse({"type": "error", "error": {
+                "type": "api_error",
+                "message": f"Gateway routing failed ({err.__class__.__name__})",
+            }}, status_code=502)
+
+        # Stage 0: native Anthropic passthrough when the routed provider speaks Anthropic.
+        try:
+            native = await _try_native_anthropic(db, requested, payload, openai_msgs, system_text, max_tokens,
+                                                  temperature, forward_headers=fw_headers, rows=rows)
+        except Exception as err:  # noqa: BLE001 — passthrough is optional, not fatal
+            gw.log.warning("native anthropic passthrough raised %s: %s", err.__class__.__name__, err)
+            native = None
         if native is not None:
             result = native
         else:
             try:
-                result, stage, plan = await gw.pipeline_nonstream(db, requested, openai_msgs, temperature, pipeline_body)
+                result, stage, plan = await gw.pipeline_nonstream(
+                    db, requested, openai_msgs, temperature, pipeline_body,
+                    forward_headers=fw_headers, precomputed=(rows, plan))
             except gw.HTTPError as err:
                 gw.write_log(db, model=requested, upstream_model="nova-engine",
                              provider_name="RouterX Free Engine", endpoint="/v1/messages",
@@ -286,31 +326,57 @@ async def anthropic_messages(request: Request):
                              error=err.message)
                 return JSONResponse({"type": "error", "error": {"type": "api_error", "message": err.message}},
                                     status_code=err.status)
+            except Exception as err:  # noqa: BLE001 — never surface an agent call as a bare 500
+                gw.log.exception("unhandled error in /v1/messages")
+                gw.write_log(db, model=requested, upstream_model="nova-engine",
+                             provider_name="RouterX Free Engine", endpoint="/v1/messages",
+                             status=502, latency_ms=gw.now_ms() - started, via="nova-engine",
+                             error=f"{err.__class__.__name__}: {err}")
+                return JSONResponse({"type": "error", "error": {
+                    "type": "api_error",
+                    "message": f"Gateway failed to serve the request ({err.__class__.__name__})",
+                }}, status_code=502)
 
-        tin = result.get("usage", {}).get("input_tokens") or tokens_in
-        tout = result.get("usage", {}).get("output_tokens") or gw.estimate_tokens(result.get("content") or "")
-        gw.write_log(db, model=requested, upstream_model=result["upstream_model"],
-                     provider_name=result["provider_name"], endpoint="/v1/messages",
+        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        tin = usage.get("input_tokens") or tokens_in
+        tout = usage.get("output_tokens") or gw.estimate_tokens(result.get("content") or "")
+        upstream_model = str(result.get("upstream_model") or requested)
+        provider_name = str(result.get("provider_name") or "RouterX Free Engine")
+        gw.write_log(db, model=requested, upstream_model=upstream_model,
+                     provider_name=provider_name, endpoint="/v1/messages",
                      status=200, latency_ms=gw.now_ms() - started, tokens_in=tin,
                      tokens_out=tout, via=result.get("via", "upstream"),
-                     spoofed=requested != result["upstream_model"])
+                     spoofed=requested != upstream_model)
 
         content_blocks: list[dict] = []
         text_out = gw.strip_think_blocks(result.get("content")) or ""
         if text_out:
             content_blocks.append({"type": "text", "text": text_out})
-        if result.get("tool_blocks"):
+        tool_blocks = result.get("tool_blocks")
+        if isinstance(tool_blocks, list) and tool_blocks:
             # native anthropic upstream already returns proper tool_use blocks
-            content_blocks.extend(result["tool_blocks"])
+            content_blocks.extend(b for b in tool_blocks if isinstance(b, dict))
         else:
             tc = result.get("tool_calls")
-            if tc:
+            if isinstance(tc, list) and tc:
                 content_blocks.extend(openai_tool_calls_to_anthropic(tc))
-        stop_reason = result.get("stop_reason") or ("tool_use" if result.get("tool_calls") or result.get("tool_blocks") else "end_turn")
+        if result.get("tool_calls") or result.get("tool_blocks"):
+            stop_reason = "tool_use"
+        elif result.get("stop_reason"):
+            stop_reason = result["stop_reason"]
+        else:
+            # Preserve the OpenAI finish reason where Anthropic has a distinct
+            # value (Claude Code reacts to max_tokens by shortening the turn).
+            finish = str(result.get("finish_reason") or "")
+            stop_reason = "max_tokens" if finish in ("length", "max_tokens") else "end_turn"
 
         # Merge upstream response headers (retry-after, x-should-retry, ratelimit)
-        upstream_headers = result.get("upstream_headers") or {}
-        resp_headers = {**gw.build_headers(), **upstream_headers}
+        upstream_headers = result.get("upstream_headers")
+        resp_headers = {**gw.build_headers(),
+                        **(upstream_headers if isinstance(upstream_headers, dict) else {})}
+        # The gateway synthesizes a JSON body; never let an upstream content-type
+        # (e.g. text/event-stream from a degraded proxy) mislabel it.
+        resp_headers.pop("content-type", None)
 
         response_body: dict = {
             "id": f"msg_{uuid.uuid4().hex[:24]}",
@@ -321,7 +387,7 @@ async def anthropic_messages(request: Request):
             "stop_reason": stop_reason,
             "stop_sequence": None,
             "usage": {"input_tokens": tin, "output_tokens": tout},
-            "_nova": gw.nova_meta(result["upstream_model"], result["provider_name"], result.get("stage", 1), requested,
+            "_nova": gw.nova_meta(upstream_model, provider_name, result.get("stage", 1), requested,
                                  result.get("stage", 1) > 1 or not plan.get("direct", True)),
         }
         # Forward safeguard_results from the upstream so Claude Code's
@@ -333,46 +399,76 @@ async def anthropic_messages(request: Request):
 
 async def _try_native_anthropic(db: Session, requested: str, payload: dict, openai_msgs: list[dict],
                                 system_text: str | None, max_tokens: int, temperature,
-                                forward_headers: dict[str, str] | None = None) -> dict | None:
-    """Speak natively to an anthropic-kind provider when the requested model maps to one.
+                                forward_headers: dict[str, str] | None = None,
+                                rows: list | None = None) -> dict | None:
+    """Speak natively to the routed anthropic-kind provider for this request.
 
-    `forward_headers` carries request headers (e.g. `anthropic-beta`) that the
-    gateway must pass through unchanged for Claude Code's classifier/safeguards
-    billing to stay server-side.
+    The row comes from the SAME routing plan the fallback pipeline uses, so a
+    policy/exposure rule or a stateful strategy cannot be bypassed by the
+    passthrough. `forward_headers` carries request headers (e.g.
+    `anthropic-beta`) that must pass through unchanged for Claude Code's
+    classifier/safeguards billing to stay server-side.
     """
     gw = _deps()
-    row = gw.find_model(db, requested)
-    if row is None or row.provider is None or row.provider.kind != "anthropic" or not row.provider.enabled:
+    if rows is None:
+        try:
+            rows, _plan = gw.route_request(db, requested, payload)
+        except Exception:
+            return None
+    if not rows:
+        return None
+    row = rows[0]
+    if row.provider is None or row.provider.kind != "anthropic" or not row.provider.enabled:
         return None
     key_info = await asyncio.to_thread(gw.select_upstream_key_sync, row.provider.id)
     if key_info is None:
         return None
-    base = row.provider.baseUrl.rstrip("/")
+    base = (row.provider.baseUrl or "").rstrip("/")
     if not base or base.startswith("internal://"):
         return None
 
     body = native_anthropic_body(payload, row.modelId)
 
+    # Native passthrough is opportunistic: it must never be the reason an agent
+    # request fails. Any transport/parse problem falls through to the regular
+    # routing pipeline instead of escaping as an HTTP 500.
     try:
-        async with httpx.AsyncClient(timeout=gw.NONSTREAM_READ_TIMEOUT) as client:
-            res = await client.post(
-                anthropic_url(base),
-                headers=anthropic_headers(key_info["apiKey"], forward=forward_headers),
-                json=body,
-            )
+        res = await gw.NONSTREAM_CLIENT.post(
+            anthropic_url(base),
+            headers={**anthropic_headers(key_info["apiKey"], forward=forward_headers),
+                     "Accept": "application/json"},
+            json=body,
+        )
         if res.status_code < 200 or res.status_code >= 300:
+            gw.log.info("native anthropic %s returned HTTP %s — using the fallback pipeline",
+                        row.provider.key, res.status_code)
             return None
-        data = res.json()
-    except httpx.HTTPError:
+        if "text/event-stream" in (res.headers.get("content-type") or "").lower():
+            gw.log.warning("native anthropic %s streamed a 2xx to a non-stream request — using the pipeline",
+                           row.provider.key)
+            return None
+        data = response_json_dict(res)
+    except httpx.HTTPError as err:
+        gw.log.info("native anthropic %s transport failed: %s — using the fallback pipeline",
+                    row.provider.key, err)
+        return None
+    except Exception as err:  # noqa: BLE001
+        gw.log.warning("native anthropic %s raised %s: %s — using the fallback pipeline",
+                       row.provider.key, err.__class__.__name__, err)
         return None
 
+    if data is None:
+        gw.log.warning("native anthropic %s returned a non-JSON 2xx body — using the fallback pipeline",
+                       row.provider.key)
+        return None
+    blocks = data.get("content") if isinstance(data.get("content"), list) else []
     content = gw.strip_think_blocks("".join(
-        str(b.get("text", "")) for b in data.get("content", []) if isinstance(b, dict) and b.get("type") == "text"
+        str(b.get("text", "")) for b in blocks if isinstance(b, dict) and b.get("type") == "text"
     ))
-    usage = data.get("usage", {}) if isinstance(data.get("usage"), dict) else {}
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     # Preserve native tool_use blocks (Claude Code agent loops need these)
     tool_blocks = [
-        b for b in data.get("content", [])
+        b for b in blocks
         if isinstance(b, dict) and b.get("type") == "tool_use"
     ]
     if not content and not tool_blocks:
@@ -432,12 +528,13 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
         ]
 
     def delta_ev(text: str) -> bytes:
+        nonlocal next_block, active_text_block, text_block_closed
         if text_block_closed:
             # Interleaved model (text after a tool call): open a fresh text block.
-            nonlocal next_block, active_text_block
             block = next_block
             next_block += 1
             active_text_block = block
+            text_block_closed = False
             return (
                 ev("content_block_start", {"type": "content_block_start", "index": block,
                                            "content_block": {"type": "text", "text": ""}})
@@ -454,6 +551,13 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
     closed_blocks: set = set()
     next_block = 1  # index 0 = text block
     openai_tc_index_to_block: dict = {}
+    final_stop_reason: str | None = None
+
+    def finish_to_stop(reason) -> str:
+        """OpenAI/engine finish_reason → Anthropic stop_reason."""
+        if tool_used:
+            return "tool_use"
+        return "max_tokens" if str(reason or "") in ("length", "max_tokens") else "end_turn"
 
     def close_text_block() -> bytes:
         """Close the open text block once (Anthropic blocks are strictly
@@ -471,7 +575,7 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
         return close_text_block() + ev("content_block_start", {"type": "content_block_start", "index": block_index,
                                           "content_block": {"type": "tool_use", "id": tool_id, "name": name, "input": {}}})
 
-    def end_events(output_tokens: int) -> list[bytes]:
+    def end_events(output_tokens: int, reason: str | None = None) -> list[bytes]:
         # Anthropic SSE requires strictly sequential content blocks: the text
         # block (index 0) must close BEFORE any tool_use block opens, and every
         # opened block closes exactly once (duplicates are tracked here).
@@ -480,8 +584,9 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
             if blk != 0 and blk not in closed_blocks:
                 stops.append(ev("content_block_stop", {"type": "content_block_stop", "index": blk}))
                 closed_blocks.add(blk)
+        stop_reason = reason or ("tool_use" if tool_used else "end_turn")
         stops.append(ev("message_delta", {"type": "message_delta",
-                                          "delta": {"stop_reason": "tool_use" if tool_used else "end_turn"},
+                                          "delta": {"stop_reason": stop_reason},
                                           "usage": {"output_tokens": output_tokens}}))
         stops.append(ev("message_stop", {"type": "message_stop"}))
         return stops
@@ -494,9 +599,11 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
             if not isinstance(tc, dict):
                 continue
             oi = tc.get("index", 0)
+            if not isinstance(oi, (int, str)):
+                oi = 0
             block = openai_tc_index_to_block.get(oi)
             if block is None:
-                fn = tc.get("function") or {}
+                fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
                 block = next_block
                 next_block += 1
                 openai_tc_index_to_block[oi] = block
@@ -507,8 +614,9 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                     str(tc.get("id") or f"toolu_{uuid.uuid4().hex[:16]}"),
                     str(fn.get("name") or ""),
                 ))
-            args = (tc.get("function") or {}).get("arguments")
-            if args:
+            fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+            args = fn.get("arguments")
+            if isinstance(args, str) and args:
                 out.append(ev("content_block_delta", {"type": "content_block_delta", "index": block,
                                                       "delta": {"type": "input_json_delta", "partial_json": args}}))
         return out
@@ -525,92 +633,137 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                 active_text_block = 0
                 out.append(tool_block_start(next_block, str(cb.get("id") or f"toolu_{uuid.uuid4().hex[:16]}"),
                                             str(cb.get("name") or "")))
-                openai_tc_index_to_block[obj.get("index", next_block)] = next_block
+                upstream_index = obj.get("index", next_block)
+                if not isinstance(upstream_index, (int, str)):
+                    upstream_index = next_block
+                openai_tc_index_to_block[upstream_index] = next_block
                 next_block += 1
         elif t == "content_block_delta":
-            d = obj.get("delta") or {}
+            d = obj.get("delta") if isinstance(obj.get("delta"), dict) else {}
             if d.get("type") == "input_json_delta":
-                block = openai_tc_index_to_block.get(obj.get("index"))
+                idx = obj.get("index")
+                block = openai_tc_index_to_block.get(idx) if isinstance(idx, (int, str)) else None
                 if block is not None:
                     out.append(ev("content_block_delta", {"type": "content_block_delta", "index": block,
                                                           "delta": {"type": "input_json_delta",
                                                                     "partial_json": d.get("partial_json") or ""}}))
         elif t == "content_block_stop":
-            block = openai_tc_index_to_block.get(obj.get("index"))
+            idx = obj.get("index")
+            block = openai_tc_index_to_block.get(idx) if isinstance(idx, (int, str)) else None
             if block is not None and block not in closed_blocks:
                 closed_blocks.add(block)
                 out.append(ev("content_block_stop", {"type": "content_block_stop", "index": block}))
         return out
 
     try:
-        # Native anthropic passthrough (streaming relay)
-        row = gw.find_model(db, requested)
-        if row is not None and row.provider is not None and row.provider.kind == "anthropic" and row.provider.enabled:
-            key_info = await asyncio.to_thread(gw.select_upstream_key_sync, row.provider.id)
-            base = row.provider.baseUrl.rstrip("/")
-            if key_info and base and not base.startswith("internal://"):
-                body = native_anthropic_body(payload, row.modelId, stream=True)
-                client = gw.UPSTREAM_CLIENT  # shared pooled client — warm connections
-                try:
-                    req = client.build_request(
-                        "POST", anthropic_url(base),
-                        headers=anthropic_headers(key_info["apiKey"], forward=forward_headers),
-                        json=body)
-                    res = await client.send(req, stream=True)
-                except httpx.HTTPError:
+        # Resolve the plan once: the native relay and the fallback chain must
+        # obey the same routing decision (policy/exposure/strategy included).
+        try:
+            rows, plan = gw.route_request(db, requested, pipeline_body)
+        except gw.HTTPError as err:
+            yield ev("error", {"type": "error", "error": {
+                "type": "api_error", "message": err.message}})
+            return
+        except Exception as err:  # noqa: BLE001
+            gw.log.exception("anthropic stream routing failed")
+            yield ev("error", {"type": "error", "error": {
+                "type": "api_error",
+                "message": f"Gateway routing failed ({err.__class__.__name__})",
+            }})
+            return
+
+        # Native anthropic passthrough (streaming relay). Optional: a transport
+        # or payload problem here falls through to the routing pipeline instead
+        # of truncating the agent's stream.
+        try:
+            row = rows[0] if rows else None
+            if row is not None and row.provider is not None and row.provider.kind == "anthropic" and row.provider.enabled:
+                key_info = await asyncio.to_thread(gw.select_upstream_key_sync, row.provider.id)
+                base = (row.provider.baseUrl or "").rstrip("/")
+                if key_info and base and not base.startswith("internal://"):
+                    body = native_anthropic_body(payload, row.modelId, stream=True)
+                    client = gw.UPSTREAM_CLIENT  # shared pooled client — warm connections
                     res = None
-                if res is not None and 200 <= res.status_code < 300:
-                    committed = True
-                    served = {"upstream_model": row.modelId, "provider_name": row.provider.name,
-                              "via": "upstream-anthropic", "stage": 1}
-                    for start_chunk in start_events():
-                        yield start_chunk
-                    async for line in res.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[6:].strip()
+                    try:
+                        req = client.build_request(
+                            "POST", anthropic_url(base),
+                            headers={**anthropic_headers(key_info["apiKey"], forward=forward_headers),
+                                     "Accept": "text/event-stream"},
+                            json=body)
+                        res = await client.send(req, stream=True)
+                    except Exception as err:  # noqa: BLE001
+                        gw.log.info("native anthropic stream %s failed: %s — trying the pipeline",
+                                    row.provider.key, err)
+                    if (res is not None and 200 <= res.status_code < 300
+                            and "text/event-stream" in (res.headers.get("content-type") or "")):
+                        committed = True
+                        served = {"upstream_model": row.modelId, "provider_name": row.provider.name,
+                                  "via": "upstream-anthropic", "stage": 1}
                         try:
-                            obj = json.loads(data)
-                        except Exception:
-                            continue
-                        t = obj.get("type")
-                        if t == "content_block_delta":
-                            d = obj.get("delta") or {}
-                            if d.get("type") == "input_json_delta":
-                                for b in relay_native_anthropic_events(obj):
-                                    yield b
-                                continue
-                            text = d.get("text", "")
-                            if text:
-                                filtered = anthro_think.feed(text)
-                                if filtered:
-                                    assembled.append(filtered)
-                                    yield delta_ev(filtered)
-                        elif t in ("content_block_start", "content_block_stop"):
-                            for b in relay_native_anthropic_events(obj):
-                                yield b
-                        elif t in ("message_stop", "message_delta"):
-                            continue
-                    await res.aclose()
-                    yield b"".join(end_events(gw.estimate_tokens("".join(assembled))))
-                elif res is not None:
-                    await res.aclose()
+                            for start_chunk in start_events():
+                                yield start_chunk
+                            async for line in res.aiter_lines():
+                                if not line.startswith("data: "):
+                                    continue
+                                data = line[6:].strip()
+                                try:
+                                    obj = json.loads(data)
+                                except Exception:
+                                    continue
+                                if not isinstance(obj, dict):
+                                    continue
+                                t = obj.get("type")
+                                if t == "content_block_delta":
+                                    d = obj.get("delta") if isinstance(obj.get("delta"), dict) else {}
+                                    if d.get("type") == "input_json_delta":
+                                        for b in relay_native_anthropic_events(obj):
+                                            yield b
+                                        continue
+                                    text = d.get("text", "")
+                                    if isinstance(text, str) and text:
+                                        filtered = anthro_think.feed(text)
+                                        if filtered:
+                                            assembled.append(filtered)
+                                            yield delta_ev(filtered)
+                                elif t in ("content_block_start", "content_block_stop"):
+                                    for b in relay_native_anthropic_events(obj):
+                                        yield b
+                                elif t == "message_delta":
+                                    d = obj.get("delta") if isinstance(obj.get("delta"), dict) else {}
+                                    reason = d.get("stop_reason")
+                                    if isinstance(reason, str) and reason:
+                                        final_stop_reason = reason
+                                    continue
+                                elif t == "message_stop":
+                                    continue
+                            yield b"".join(end_events(gw.estimate_tokens("".join(assembled)),
+                                                      final_stop_reason))
+                        finally:
+                            await res.aclose()
+                    elif res is not None:
+                        await res.aclose()
+        except Exception as err:  # noqa: BLE001
+            gw.log.warning("native anthropic stream raised %s: %s", err.__class__.__name__, err)
+            if committed:
+                yield ev("error", {"type": "error", "error": {
+                    "type": "api_error",
+                    "message": f"Upstream stream failed ({err.__class__.__name__}) — retry the turn",
+                }})
+                return
 
         if not committed:
-            try:
-                rows = gw.resolve_pipeline(db, requested)
-            except gw.HTTPError as err:
-                # A blocked model must surface as a clean Anthropic error, not a
-                # half-open SSE stream the client has to guess at.
-                yield ev("error", {"type": "error", "error": {
-                    "type": "api_error", "message": err.message}})
-                return
             stage = 0
             for r in rows:
                 stage += 1
                 try:
-                    stream, provider_name, upstream_model = await gw.attempt_upstream_stream(r, openai_msgs, temperature, pipeline_body)
+                    stream, provider_name, upstream_model = await gw.attempt_upstream_stream(
+                        r, openai_msgs, temperature, pipeline_body,
+                        forward_headers=forward_headers)
                 except gw.UpstreamFailure:
+                    continue
+                except Exception as err:  # noqa: BLE001 — one bad stage must not kill the stream
+                    gw.log.warning("anthropic stream stage %s crashed: %s: %s",
+                                   stage, err.__class__.__name__, err)
                     continue
                 pieces = gw._iterate_with_heartbeat(stream, b": routerx-keepalive\n\n")
                 first = None
@@ -621,7 +774,7 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                     if kind == "hb":
                         yield value
                         continue
-                    if kind == "piece" and (value["text"] or value["finish_reason"] or value.get("tool_calls")):
+                    if kind == "piece" and (value.get("text") or value.get("finish_reason") or value.get("tool_calls")):
                         first = value
                     break
                 if first is None:
@@ -638,13 +791,16 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                 if first.get("tool_calls"):
                     for b in handle_openai_tool_deltas(first["tool_calls"]):
                         yield b
-                if first["text"]:
-                    filtered = anthro_think.feed(first["text"])
+                first_text = first.get("text")
+                if isinstance(first_text, str) and first_text:
+                    filtered = anthro_think.feed(first_text)
                     if filtered:
                         assembled.append(filtered)
                         yield delta_ev(filtered)
-                if first.get("finish_reason"):
-                    yield b"".join(end_events(gw.estimate_tokens("".join(assembled))))
+                finish_reason_val = first.get("finish_reason")
+                if finish_reason_val:
+                    yield b"".join(end_events(gw.estimate_tokens("".join(assembled)),
+                                              finish_to_stop(finish_reason_val)))
                     try:
                         await stream.aclose()
                     except Exception:
@@ -656,24 +812,24 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                         continue
                     if kind == "eof":
                         break
-                    if piece["text"]:
-                        filtered = anthro_think.feed(piece["text"])
+                    piece_text = piece.get("text")
+                    if isinstance(piece_text, str) and piece_text:
+                        filtered = anthro_think.feed(piece_text)
                         if filtered:
                             assembled.append(filtered)
                             yield delta_ev(filtered)
                     if piece.get("tool_calls"):
                         for b in handle_openai_tool_deltas(piece["tool_calls"]):
                             yield b
-                    if piece["finish_reason"]:
+                    if piece.get("finish_reason"):
+                        finish_reason_val = piece.get("finish_reason")
                         break
-                yield b"".join(end_events(gw.estimate_tokens("".join(assembled))))
+                yield b"".join(end_events(gw.estimate_tokens("".join(assembled)),
+                                          finish_to_stop(finish_reason_val)))
                 break
 
         if not committed:
-            try:
-                stage = len(gw.resolve_pipeline(db, requested)) + 1
-            except gw.HTTPError:
-                stage = 1
+            stage = len(rows) + 1
             served = {"upstream_model": "nova-engine", "provider_name": "RouterX Free Engine",
                       "via": "nova-engine", "stage": stage}
             try:
@@ -682,6 +838,7 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                 iterator = await gw.nova_engine.chat_stream(
                     openai_msgs, tools=openai_tools, tool_choice=openai_tool_choice, model=requested
                 )
+                engine_finish = None
                 async for data in iterator:
                     if data == "[DONE]":
                         break
@@ -697,27 +854,46 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                         served["provider_name"] = engine_meta.get("provider") or served["provider_name"]
                     if obj.get("error"):
                         raise gw.nova_engine.EngineUnavailable(str(obj.get("error", "engine error")))
-                    choices = obj.get("choices") or []
+                    choices = obj.get("choices") if isinstance(obj.get("choices"), list) else []
                     text = ""
-                    if choices:
-                        delta = choices[0].get("delta") or {}
+                    if choices and isinstance(choices[0], dict):
+                        delta = choices[0].get("delta") if isinstance(choices[0].get("delta"), dict) else {}
                         text = delta.get("content") or ""
                         for b in handle_openai_tool_deltas(delta.get("tool_calls")):
                             yield b
+                        if choices[0].get("finish_reason"):
+                            engine_finish = choices[0]["finish_reason"]
                         if not text:
-                            text = (choices[0].get("message") or {}).get("content") or ""
-                    if text:
+                            message = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
+                            text = message.get("content") or ""
+                    if isinstance(text, str) and text:
                         filtered = anthro_think.feed(text)
                         if filtered:
                             assembled.append(filtered)
                             yield delta_ev(filtered)
-                yield b"".join(end_events(gw.estimate_tokens("".join(assembled))))
+                yield b"".join(end_events(gw.estimate_tokens("".join(assembled)),
+                                          finish_to_stop(engine_finish)))
             except gw.nova_engine.EngineUnavailable as err:
                 detail = ("All routing stages failed: %s. Fix checklist: (1) Dashboard → Providers → Test your provider; "
                           "(2) Dashboard → Models → Sync models; (3) the built-in RouterX Free engine runs the free "
                           "ai-models catalogue with no key, so a request should never reach this branch — check the "
                           "server log for the engine sidecar." % err)
                 yield ev("error", {"type": "error", "error": {"type": "api_error", "message": detail}})
+            except Exception as err:  # noqa: BLE001
+                gw.log.exception("RouterX Free engine anthropic stream failed")
+                yield ev("error", {"type": "error", "error": {
+                    "type": "api_error",
+                    "message": f"All routing stages failed: engine response error ({err.__class__.__name__})",
+                }})
+    except Exception as err:  # noqa: BLE001 — headers already sent; emit a clean Anthropic error
+        gw.log.exception("unhandled error in /v1/messages stream")
+        try:
+            yield ev("error", {"type": "error", "error": {
+                "type": "api_error",
+                "message": f"Gateway stream failed ({err.__class__.__name__}) — retry the turn",
+            }})
+        except Exception:
+            pass
     finally:
         if assembled:
             gw.write_log(db, model=requested, upstream_model=served["upstream_model"],

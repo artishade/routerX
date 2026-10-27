@@ -184,7 +184,13 @@ async def chat(
         except Exception:
             detail = res.text
         raise EngineUnavailable(f"engine error: {detail}")
-    return res.json()
+    try:
+        data = res.json()
+    except Exception as err:
+        raise EngineUnavailable(f"engine returned invalid JSON: {err.__class__.__name__}") from err
+    if not isinstance(data, dict):
+        raise EngineUnavailable("engine returned a non-object JSON payload")
+    return data
 
 
 async def chat_stream(

@@ -6,12 +6,13 @@ from unittest.mock import patch
 
 import httpx
 
-from nova import discovery
+from nova import bootstrap, discovery
 from nova.provider_transport import (
     anthropic_to_openai, native_anthropic_body, openai_to_anthropic,
 )
 from routers import gateway
 from routers.admin_providers import PRESETS, validate_base_url
+from routers.anthropic_adapter import anthropic_messages_to_openai
 
 
 def row(kind="anthropic", base="https://api.anthropic.com"):
@@ -56,6 +57,65 @@ class ProviderProtocolTests(unittest.IsolatedAsyncioTestCase):
                  {"type": "thinking", "thinking": "private"}]}], "max_tokens": 200}
         native = native_anthropic_body(payload, "claude-example")
         self.assertEqual(native["messages"][0]["content"], payload["messages"][0]["content"][:1])
+
+    def test_parallel_tool_results_share_one_user_turn(self):
+        messages = [
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                {"id": "call_2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "one"},
+            {"role": "tool", "tool_call_id": "call_2", "content": "two"},
+        ]
+        body = openai_to_anthropic("claude-example", messages, {})
+        self.assertEqual([m["role"] for m in body["messages"]], ["assistant", "user"])
+        results = body["messages"][1]["content"]
+        self.assertEqual([b["tool_use_id"] for b in results], ["call_1", "call_2"])
+
+    def test_anthropic_tool_result_pairs_with_tool_use(self):
+        messages, system = anthropic_messages_to_openai({
+            "system": "Be brief.",
+            "messages": [
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {"q": "x"}},
+                ]},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Here is the result."},
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"},
+                ]},
+            ],
+        })
+        self.assertEqual(system, "Be brief.")
+        self.assertEqual(messages[1]["role"], "assistant")
+        self.assertEqual(messages[2]["role"], "tool")
+        self.assertEqual(messages[2]["tool_call_id"], "toolu_1")
+        self.assertEqual(messages[3]["role"], "user")
+        self.assertEqual(messages[3]["content"], "Here is the result.")
+
+    async def test_non_json_2xx_is_a_failed_stage_not_an_exception(self):
+        async def handler(req):
+            return httpx.Response(200, text="<html>degraded upstream</html>",
+                                  headers={"content-type": "text/html"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            with patch.object(gateway, "NONSTREAM_CLIENT", client), patch("nova.database.SessionLocal") as session:
+                session.return_value.__enter__.return_value.scalars.return_value.first.return_value = SimpleNamespace(apiKey="test-token", cooldownUntil=None)
+                result = await gateway.attempt_upstream(
+                    row("openai", "https://example.test/v1"),
+                    [{"role": "user", "content": "hello"}], None)
+            self.assertIsNone(result)
+        finally:
+            await client.aclose()
+
+    def test_schema_sync_ddl_is_additive(self):
+        from sqlalchemy import Boolean, Column
+
+        sql = bootstrap._add_column_sql("ModelRoute", Column("auto", Boolean, default=True))
+        self.assertIn("ALTER TABLE", sql)
+        self.assertIn("ADD COLUMN", sql)
+        self.assertIn("DEFAULT TRUE", sql)
+        self.assertNotIn("NOT NULL", sql)
 
     async def test_native_nonstream_transport(self):
         async def handler(req):

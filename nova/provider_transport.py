@@ -51,6 +51,21 @@ def extract_forward_headers(scope: dict | None = None, request=None) -> dict[str
     return out
 
 
+def response_json_dict(response: httpx.Response) -> dict | None:
+    """Parse an upstream JSON object without ever raising.
+
+    A 2xx is not a promise of JSON: providers answer with HTML challenge pages,
+    empty bodies, or arrays when they are degraded. Returning ``None`` lets the
+    gateway treat that as "this stage failed" and continue the fallback chain,
+    instead of leaking a ``ValueError`` as an HTTP 500.
+    """
+    try:
+        data = response.json()
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def forward_response_headers(response: httpx.Response) -> dict[str, str]:
     """Headers the gateway must pass through on Anthropic-format responses so
     that stall detection, retries, and usage-limit display all work."""
@@ -73,7 +88,8 @@ def _tool_choice(choice):
     if choice == "auto":
         return {"type": "auto"}
     if isinstance(choice, dict) and choice.get("type") == "function":
-        name = (choice.get("function") or {}).get("name")
+        fn = choice.get("function") if isinstance(choice.get("function"), dict) else {}
+        name = fn.get("name")
         if name:
             return {"type": "tool", "name": name}
     return None
@@ -87,6 +103,21 @@ def openai_to_anthropic(model: str, messages: list[dict], options: dict | None =
                   "messages": []}
     if stream:
         body["stream"] = True
+    def append_blocks(role: str, blocks: list[dict]) -> None:
+        """Append one turn, merging consecutive same-role turns.
+
+        Anthropic wants one user turn carrying every parallel `tool_result`
+        block for a tool call. Emitting one user message per tool result makes
+        the upstream reject the conversation ("roles must alternate"), which
+        used to burn the Anthropic fallback on the second agent turn.
+        """
+        target = role if role in ("assistant", "user") else "user"
+        blocks = blocks or [{"type": "text", "text": ""}]
+        if body["messages"] and body["messages"][-1]["role"] == target:
+            body["messages"][-1]["content"].extend(blocks)
+        else:
+            body["messages"].append({"role": target, "content": blocks})
+
     system: list[str] = []
     for m in messages:
         role = m.get("role")
@@ -94,8 +125,17 @@ def openai_to_anthropic(model: str, messages: list[dict], options: dict | None =
             system.append(str(m.get("content") or ""))
             continue
         if role == "tool":
-            body["messages"].append({"role": "user", "content": [{"type": "tool_result",
-                "tool_use_id": m.get("tool_call_id") or "", "content": str(m.get("content") or "")}]})
+            tool_content = m.get("content")
+            if isinstance(tool_content, list):
+                tool_content = "\n".join(
+                    str(part.get("text", "")) for part in tool_content
+                    if isinstance(part, dict) and "text" in part
+                )
+            else:
+                tool_content = str(tool_content or "")
+            append_blocks("user", [{"type": "tool_result",
+                                    "tool_use_id": m.get("tool_call_id") or "",
+                                    "content": tool_content}])
             continue
         blocks: list[dict] = []
         content = m.get("content")
@@ -107,7 +147,7 @@ def openai_to_anthropic(model: str, messages: list[dict], options: dict | None =
             for call in m.get("tool_calls") or []:
                 if not isinstance(call, dict):
                     continue
-                fn = call.get("function") or {}
+                fn = call.get("function") if isinstance(call.get("function"), dict) else {}
                 args = fn.get("arguments") or {}
                 if isinstance(args, str):
                     try:
@@ -116,8 +156,7 @@ def openai_to_anthropic(model: str, messages: list[dict], options: dict | None =
                         args = {}
                 blocks.append({"type": "tool_use", "id": call.get("id") or f"toolu_{uuid.uuid4().hex[:16]}",
                                "name": fn.get("name") or "", "input": args if isinstance(args, dict) else {}})
-        body["messages"].append({"role": role if role in ("assistant", "user") else "user",
-                                 "content": blocks or [{"type": "text", "text": ""}]})
+        append_blocks(role, blocks)
     if system:
         body["system"] = "\n".join(system)
     for field in ("temperature", "top_p", "top_k"):
@@ -129,7 +168,7 @@ def openai_to_anthropic(model: str, messages: list[dict], options: dict | None =
     for tool in options.get("tools") or []:
         if not isinstance(tool, dict) or tool.get("type") != "function":
             continue
-        fn = tool.get("function") or {}
+        fn = tool.get("function") if isinstance(tool.get("function"), dict) else {}
         if fn.get("name"):
             tools.append({"name": fn["name"], "description": fn.get("description") or "",
                           "input_schema": fn.get("parameters") or {"type": "object", "properties": {}}})
@@ -157,7 +196,7 @@ def native_anthropic_body(payload: dict, model: str, stream: bool = False) -> di
                                or b.get("type") not in ("thinking", "redacted_thinking")]
         body["messages"].append(copy)
     for field in ("temperature", "top_p", "top_k", "stop_sequences", "tools", "tool_choice",
-                  "safeguards", "metadata"):
+                  "thinking", "safeguards", "metadata"):
         if field in payload and payload[field] is not None:
             body[field] = payload[field]
     return body

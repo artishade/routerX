@@ -16,7 +16,7 @@ Rules that keep changes consistent. Break these only with a documented reason
 
 4. `nova/models.py` is the single source of schema truth. Never hand-edit the
    DB file; never write destructive migrations. `nova/bootstrap.py` creates
-   missing tables additively at boot.
+   missing tables and adds missing columns (constant defaults, no NOT NULL) at boot.
 5. Request-scoped DB access uses the `get_db()` dependency. Long-lived work
    (agent loop, background tasks) opens its own `SessionLocal()` per operation —
    never hold one session across a whole task run.
@@ -36,7 +36,9 @@ Rules that keep changes consistent. Break these only with a documented reason
     mutations and use `routers/_common.py` helpers (`json_body`, `not_found`,
     `invalid_id`, `mask_key`, `epoch_ms`).
 11. Errors are JSON `{error: "message"}` with correct 4xx/5xx status codes.
-    A 4xx/5xx from the gateway must also write a RequestLog row.
+    A 4xx/5xx from the gateway must also write a RequestLog row. Provider/engine
+    faults are 502/503/504 (Anthropic-shaped on `/v1/messages`), never a bare
+    500, and every gateway response carries `x-request-id`.
 12. Timeouts for upstream calls are env-tunable (`NOVA_CONNECT_TIMEOUT`,
     `NOVA_UPSTREAM_READ_TIMEOUT`, `NOVA_NONSTREAM_READ_TIMEOUT`) and share pooled
     `httpx.AsyncClient` instances — never build a fresh client per request.

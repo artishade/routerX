@@ -175,3 +175,35 @@ with the user before overriding, or add a new dated entry explaining the pivot.
 - **One registry, two consumers.** `nova/mcp_registry.py` backs both the console
   drawer (`/ui/console/plugins*`) and the agent (`mcp_call` action), so what
   the user sees in the UI is exactly what the planner can call.
+
+## 2026-10-28 — Gateway failures are typed, never bare 500s
+- **A 2xx from an upstream is not proof of JSON.** `attempt_upstream`,
+  `_try_native_anthropic` and the engine client now parse through
+  `response_json_dict()` / an explicit check. A degraded provider answering
+  HTML/empty/array used to raise `ValueError` out of the endpoint — the exact
+  "discovery works, inference returns 500" shape. It is now a failed stage, so
+  the fallback chain continues.
+- **The native Anthropic passthrough uses the same plan as everything else.**
+  It used to call `find_model()` directly, bypassing the policy engine,
+  exposure lists, and stateful ordering. `_try_native_anthropic(..., rows=…)`
+  and `pipeline_nonstream(..., precomputed=…)` now share one `route_request()`
+  decision per request, so the passthrough cannot dispatch a model the router
+  excluded.
+- **Unexpected exceptions are translated at the boundary.** Non-stream
+  `/v1/messages` and `/v1/chat/completions` return 502/503 in the client's
+  protocol shape, streaming paths emit an SSE `error` event, and `main.py` has
+  a last-resort exception handler. Every gateway response carries
+  `x-request-id`; the same id is in the error message and server log.
+- **Schema drift is a 500 factory.** `create_all` creates missing tables but
+  never ALTERs an existing one, so an upgraded DB could keep an old
+  `ModelRoute` without `.auto` while `/v1/models` still worked and every
+  inference query failed. `bootstrap.sync_schema_columns()` adds missing
+  columns with constant defaults (never NOT NULL, never rewriting rows) before
+  seeding. Additive, per the data-safety contract.
+- **SQLite self-hosting gets WAL + a 30s busy timeout.** Concurrent agent
+  turns used to turn ordinary write contention into `database is locked`
+  (OperationalError) and then 500. Postgres remains the recommended store.
+- **Agent-loop conversion fixes:** Anthropic `tool_result.tool_use_id` is now
+  read (not the OpenAI spelling), tool results precede user text, and
+  `openai_to_anthropic` merges parallel tool results into one user turn —
+  without that, the second Claude turn was rejected by Anthropic.
