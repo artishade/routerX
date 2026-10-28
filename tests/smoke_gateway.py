@@ -59,7 +59,7 @@ async def main() -> int:
             for tier in ("routerx/mini", "routerx/air", "routerx/pro"):
                 check(tier in ids, f"/v1/models exposes {tier}")
             free_ids = [i for i in ids if i and ":" in str(i)]
-            check(len(free_ids) >= 10, "/v1/models exposes the free-ai-models catalogue", f"{len(free_ids)} ids")
+            check(len(free_ids) >= 10, "/v1/models exposes the RouterX Free catalogue", f"{len(free_ids)} ids")
 
             # ---- engine catalogue surface --------------------------------
             print("· engine /models (sidecar)")

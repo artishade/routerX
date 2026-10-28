@@ -86,7 +86,7 @@ def _kill_stale_sidecars() -> None:
 async def start_sidecar() -> bool:
     """Spawn the engine sidecar; returns True when it reports healthy.
 
-    The engine is config-free (free-ai-models based), so the only requirements
+    The engine is config-free (bundled catalogue), so the only requirements
     are a JS runtime and the engine files — no credentials or config files.
     """
     global _sidecar_proc, ENGINE_SIDECAR_PORT, ENGINE_SIDECAR_URL

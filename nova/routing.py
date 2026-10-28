@@ -1,21 +1,19 @@
-"""Routing brain — the OmniRoute domain layer, ported to Python.
+"""Routing brain: every decision about which upstream answers a request.
 
-Everything that decides *which* upstream actually answers a request lives here,
-ported from the OmniRoute domain/autoCombo layer:
+Pure functions, no I/O. Callers pass plain dicts and get plain dicts back, so
+the gateway can drive the same decisions from /v1/chat/completions, the
+dashboard preview, or a test. The pieces, in the order a request meets them:
 
-  • `tagRouter.ts`        — request `metadata.tags` steer which providers are eligible
-  • `policyEngine.ts`     — glob-matched routing / access / budget policies
-  • `accountFallback.ts`  — per (provider, model) lockouts after repeated failures
-  • `fallbackPolicy.ts`   — declarative per-model fallback chains
-  • `combo.ts`            — load-balancing strategies over a candidate set
-  • `routerStrategy.ts`   — rules / cost / latency / sla / lkgp pickers
-  • `modelExposureList.ts`— allow/deny globs applied before a candidate is used
+  - tag routing     request metadata.tags steer which providers are eligible
+  - policy engine   glob-matched routing / access / budget policies
+  - lockouts        per (provider, model) backoff after repeated failures
+  - fallback chains declarative per-model chains with priority
+  - strategies      load-balancing strategies over the candidate set
+  - pickers         rules / cost / latency / sla / lkgp selection
+  - exposure lists  allow/deny globs applied before a candidate is used
 
-Nothing here performs I/O. Callers pass plain dicts and get plain dicts back, so
-the gateway can drive the same decisions from `/v1/chat/completions`, the
-dashboard preview, or a test. State that must outlive a process (lockouts,
-chains, policies) is persisted through `SystemConfig` by the caller — see
-`load_state` / `dump_state`.
+State that must outlive a process (lockouts, chains, policies) is persisted
+through SystemConfig by the caller, see load_state / dump_state.
 """
 from __future__ import annotations
 
@@ -50,7 +48,7 @@ ROUTER_STRATEGIES = ("rules", "cost", "latency", "sla", "lkgp")
 
 
 # --------------------------------------------------------------------------- #
-# Tag routing — port of src/domain/tagRouter.ts
+# Tag routing
 # --------------------------------------------------------------------------- #
 
 def normalize_tags(value: Any) -> list[str]:
@@ -82,7 +80,7 @@ def normalize_match_mode(value: Any) -> str:
 def matches_tags(connection_tags: Sequence[str], request_tags: Sequence[str], mode: str = "any") -> bool:
     """Untagged requests match everything; untagged providers match nothing.
 
-    This is the load-bearing asymmetry from OmniRoute: a client that never sends
+    This asymmetry is deliberate: a client that never sends
     tags gets the full pool, while a provider carrying no tags is opt-in.
     """
     if not request_tags:
@@ -106,7 +104,7 @@ def request_tags(body: dict | None) -> tuple[list[str], str]:
 
 
 # --------------------------------------------------------------------------- #
-# Availability / lockouts — port of accountFallback.ts + modelAvailability.ts
+# Availability and lockouts
 # --------------------------------------------------------------------------- #
 
 class LockoutRegistry:
@@ -147,21 +145,28 @@ class LockoutRegistry:
         return max(0, int(entry.get("until", 0)) - now)
 
     def report(self, now_ms: int | None = None) -> list[dict[str, Any]]:
-        """Every entry that is still cooling down, longest window first."""
+        """One row per (provider, model) that has been locked, longest window first.
+
+        Entries that never crossed the failure threshold are not lockouts and are
+        omitted. Expired windows are still listed so callers can see that the pair
+        failed and has recovered: `remaining_ms == 0` means the window has expired
+        and the pair is eligible again. Rows sort by `remaining_ms` descending, so
+        recovered pairs land last.
+        """
         now = _now_ms() if now_ms is None else int(now_ms)
         out: list[dict[str, Any]] = []
         with self._lock:
             entries = list(self._entries.items())
         for k, e in entries:
             until = int(e.get("until", 0))
-            if until <= now:
+            if until <= 0:
                 continue
             provider, _, model = k.partition("::")
             out.append({
                 "provider": provider, "model": model,
                 "failure_count": int(e.get("failures", 0)),
                 "until_ms": until,
-                "remaining_ms": until - now,
+                "remaining_ms": max(0, until - now),
                 "reason": e.get("reason", ""),
             })
         out.sort(key=lambda r: r["remaining_ms"], reverse=True)
@@ -170,7 +175,7 @@ class LockoutRegistry:
     def active_failures(self) -> dict[str, int]:
         """Failure counts for entries that are still cooling down."""
         return {LockoutRegistry.key(r["provider"], r["model"]): r["failure_count"]
-                for r in self.report()}
+                for r in self.report() if r["remaining_ms"] > 0}
 
     # -- mutations --------------------------------------------------------- #
     def record_failure(self, provider: str, model: str, reason: str = "") -> int:
@@ -236,7 +241,7 @@ LOCKOUTS = LockoutRegistry()
 
 
 # --------------------------------------------------------------------------- #
-# Policy engine — port of src/domain/policyEngine.ts
+# Policy engine
 # --------------------------------------------------------------------------- #
 
 def load_policies(raw: Any) -> list[dict[str, Any]]:
@@ -317,7 +322,7 @@ def evaluate_policies(policies: Sequence[dict[str, Any]], model: str) -> dict[st
 
 
 # --------------------------------------------------------------------------- #
-# Fallback chains — port of src/domain/fallbackPolicy.ts
+# Fallback chains
 # --------------------------------------------------------------------------- #
 
 def load_chains(raw: Any) -> dict[str, list[dict[str, Any]]]:
@@ -378,7 +383,7 @@ def has_fallback(chains: dict[str, list[dict[str, Any]]], model: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Client lockout — port of src/domain/lockoutPolicy.ts
+# Client lockout
 # --------------------------------------------------------------------------- #
 
 class ClientLockouts:
@@ -452,10 +457,10 @@ class ClientLockouts:
 
 
 # --------------------------------------------------------------------------- #
-# Scoring + strategies — port of autoCombo/scoring.ts + routerStrategy.ts
+# Scoring and strategies
 # --------------------------------------------------------------------------- #
 
-# OmniRoute's DEFAULT_WEIGHTS, trimmed to the factors RouterX can actually
+# Default scoring weights, trimmed to the factors RouterX can actually
 # observe from `RequestLog` + `Model` (quota/health/cost/latency/reliability/
 # quality/stability). Sums to 1.0.
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -575,7 +580,8 @@ def select(candidates: Sequence[dict[str, Any]], strategy: str = "priority", *,
            exclude: Iterable[str] = (),
            last_known_good: str | None = None,
            sla: dict[str, Any] | None = None,
-           rng: random.Random | None = None) -> list[dict[str, Any]]:
+           rng: random.Random | None = None,
+           pinned: str | None = None) -> list[dict[str, Any]]:
     """Order a candidate pool for dispatch according to `strategy`.
 
     Always returns a full ordering (the gateway walks it as its fallback chain),
@@ -587,7 +593,32 @@ def select(candidates: Sequence[dict[str, Any]], strategy: str = "priority", *,
         return []
     strategy = (strategy or "priority").strip().lower()
     rnd = rng or random
+    ordered = _select_ordered(pool, strategy, weights=weights, last_known_good=last_known_good,
+                              sla=sla, rnd=rnd)
+    return _pinned_first(ordered, pinned)
 
+
+def _pinned_first(ordered: list[dict[str, Any]], pinned: str | None) -> list[dict[str, Any]]:
+    """Move the pinned candidate to the front; keep every other candidate's order.
+
+    A sticky-session preference only reorders the chain. It never removes a
+    candidate, so a pinned model that fails or is locked out falls through like
+    any other.
+    """
+    if not pinned:
+        return ordered
+    head = [c for c in ordered if str(c.get("exposed_id", "")) == pinned]
+    if not head:
+        return ordered
+    return head + [c for c in ordered if str(c.get("exposed_id", "")) != pinned]
+
+
+def _select_ordered(pool: list[dict[str, Any]], strategy: str, *,
+                    weights: dict[str, float] | None,
+                    last_known_good: str | None,
+                    sla: dict[str, Any] | None,
+                    rnd: random.Random) -> list[dict[str, Any]]:
+    """The strategy switch itself (the pool is already copied and filtered)."""
     if strategy == "priority":
         pool.sort(key=lambda c: (int(c.get("stage", 0) or 0),
                                  int(c.get("provider_priority", 100) or 100),
@@ -719,7 +750,10 @@ def build_plan(candidates: Sequence[dict[str, Any]], *,
                request_tags_: Sequence[str] = (),
                tag_mode: str = "any",
                last_known_good: str | None = None,
-               sla: dict[str, Any] | None = None) -> dict[str, Any]:
+               sla: dict[str, Any] | None = None,
+               allowed_ids: Iterable[str] | None = None,
+               extra_chains: dict[str, list[dict[str, Any]]] | None = None,
+               pinned: str | None = None) -> dict[str, Any]:
     """Turn a raw candidate pool into a dispatch plan with an audit trail.
 
     Order of operations, each step able to drop candidates and always saying why:
@@ -732,6 +766,16 @@ def build_plan(candidates: Sequence[dict[str, Any]], *,
 
     `steps` explains every exclusion so the dashboard can show *why* a request
     did not use the provider the operator expected.
+
+    Per-request overrides used by named profiles (`auto:<name>`) and sticky
+    sessions, all optional and empty by default:
+
+      * `allowed_ids`  - close the candidate set to these exposed ids (a profile
+                         chain); candidates outside it are dropped with an
+                         `allowed_ids` step,
+      * `extra_chains` - additional declarative chains, merged after the
+                         operator's own (profile fallbacks),
+      * `pinned`       - sticky-session preference handed to `select`.
     """
     lockouts = lockouts or LOCKOUTS
     steps: list[dict[str, Any]] = []
@@ -787,8 +831,27 @@ def build_plan(candidates: Sequence[dict[str, Any]], *,
         kept.append(c)
     pool = kept
 
+    # 4b. profile narrowing (named profile / sticky pin) -------------------- #
+    if allowed_ids is not None:
+        allow = {str(x) for x in allowed_ids}
+        kept = []
+        for c in pool:
+            if str(c.get("exposed_id", "")) in allow:
+                kept.append(c)
+            else:
+                steps.append({"exposed_id": c.get("exposed_id", ""), "stage": "allowed_ids",
+                              "reason": "not in the profile's model set"})
+        pool = kept
+
+    if extra_chains:
+        merged = dict(chains or {})
+        for key, value in extra_chains.items():
+            merged.setdefault(key, value)
+        chains = merged
+
     # 5. strategy ----------------------------------------------------------- #
-    ordered = select(pool, strategy, weights=weights, last_known_good=last_known_good, sla=sla)
+    ordered = select(pool, strategy, weights=weights, last_known_good=last_known_good,
+                     sla=sla, pinned=pinned)
 
     excluded: dict[str, int] = {}
     for step in steps:

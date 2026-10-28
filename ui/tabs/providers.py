@@ -1,4 +1,4 @@
-"""Providers tab — Python UI port of src/components/nova/tabs/ProvidersTab.tsx.
+"""Providers tab — server-rendered tab over /api/admin/providers.
 
 Fragments:
   GET /partials/tab/providers        full tab (list root + add/sign-in dialogs)
@@ -33,7 +33,9 @@ from ui.render import form_dict, html, render, truthy
 
 router = APIRouter(tags=["ui:providers"])
 
-# Bounded first page of provider cards — the catalogue is large by design.
+# The catalogue is curated (19 providers), so this is a safety cap for a
+# database that grew through manual additions — not a pagination page. The
+# header still says "N of M" whenever the cap actually bites.
 PROVIDER_PAGE_SIZE = 60
 
 # Test results (mirrors the TSX `testResults` React state): provider id → last
@@ -152,8 +154,8 @@ async def _providers_ctx(request: Request) -> dict:
 
     visible = _filter_providers(rows, q)
     visible_total = len(visible)
-    # The OmniRoute catalogue brings 200+ providers; the tab renders a bounded
-    # first page and the header says "N of M". Search narrows it to anything past.
+    # A curated deployment shows every provider; if rows were added past the
+    # cap the header says "N of M" and search narrows to anything past it.
     visible = [_decorate(p, q, expand) for p in visible[:PROVIDER_PAGE_SIZE]]
     # "Test All" targets — same rule as ProvidersTab.tsx (enabled + has keys or builtin).
     test_ids = [

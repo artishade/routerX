@@ -303,7 +303,7 @@ def stats(db: Session = Depends(get_db)):
     # 10,000 rows into Python on every tab navigation / live refresh.
     n24, cache_hits, errors, avg_latency = db.execute(select(
         func.count(),
-        func.coalesce(func.sum(case((recent.c.via == "cache", 1), else_=0)), 0),
+        func.coalesce(func.sum(case((recent.c.via.in_(("cache", "cache-hit")), 1), else_=0)), 0),
         func.coalesce(func.sum(case((recent.c.status >= 400, 1), else_=0)), 0),
         func.coalesce(func.avg(recent.c.latencyMs), 0),
     ).select_from(recent)).one()
@@ -430,7 +430,7 @@ def analytics(request: Request, db: Session = Depends(get_db)):
         select(
             RequestLog.ts, RequestLog.model, RequestLog.providerName, RequestLog.clientName,
             RequestLog.status, RequestLog.latencyMs, RequestLog.tokensIn, RequestLog.tokensOut,
-            RequestLog.via, RequestLog.spoofed,
+            RequestLog.via, RequestLog.spoofed, RequestLog.ttftMs,
         ).where(RequestLog.ts >= ms_to_dt(from_ms)).limit(20000)
     ).all()
 
@@ -445,7 +445,7 @@ def analytics(request: Request, db: Session = Depends(get_db)):
     while k <= end:
         buckets[k] = {"reqs": 0, "tokens": 0, "errors": 0}
         k += step
-    for (ts, _model, _prov, _client, status, _lat, t_in, t_out, _via, _spoof) in logs:
+    for (ts, _model, _prov, _client, status, _lat, t_in, t_out, _via, _spoof, *_rest) in logs:
         b = buckets.get(key_of(ts_ms(ts)))
         if b is None:
             continue
@@ -462,7 +462,7 @@ def analytics(request: Request, db: Session = Depends(get_db)):
     model_agg: dict[str, dict] = {}
     provider_agg: dict[str, int] = {}
     client_agg: dict[str, int] = {}
-    for (_ts, model, prov, client, _status, _lat, t_in, t_out, _via, _spoof) in logs:
+    for (_ts, model, prov, client, _status, _lat, t_in, t_out, _via, _spoof, *_rest) in logs:
         m = model_agg.setdefault(model, {"reqs": 0, "tokens": 0})
         m["reqs"] += 1
         m["tokens"] += t_in + t_out
@@ -489,6 +489,10 @@ def analytics(request: Request, db: Session = Depends(get_db)):
     error_count = sum(1 for row in logs if row[4] >= 400)
     latencies = sorted(row[5] for row in logs)
     avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+    # TTFT (time to first token) is recorded by the streaming paths only; rows
+    # without an observed first token are 0 and excluded from the percentiles.
+    ttfts = sorted(int(row[10] or 0) for row in logs if int(row[10] or 0) > 0)
+    cache_hits = sum(1 for row in logs if row[8] in ("cache", "cache-hit"))
 
     return {
         "hours": hours,
@@ -505,11 +509,17 @@ def analytics(request: Request, db: Session = Depends(get_db)):
             "avg_latency_ms": r1(avg_latency),
             "p50_latency_ms": _nearest_rank(latencies, 50),
             "p90_latency_ms": _nearest_rank(latencies, 90),
+            "p95_latency_ms": _nearest_rank(latencies, 95),
             "p99_latency_ms": _nearest_rank(latencies, 99),
+            "ttft_p50_ms": _nearest_rank(ttfts, 50),
+            "ttft_p95_ms": _nearest_rank(ttfts, 95),
+            "ttft_samples": len(ttfts),
             "error_count": error_count,
             "error_rate": r1((error_count / len(logs)) * 100) if logs else 0,
             "spoofed_fallbacks_count": sum(1 for row in logs if row[9]),
-            "cache_hits": sum(1 for row in logs if row[8] == "cache"),
+            "cache_hits": cache_hits,
+            "cache_hit_rate": r1((cache_hits / len(logs)) * 100) if logs else 0,
+            "cache_hits_recent": cache_hits,  # UI alias: same window, same number
         },
     }
 
@@ -546,6 +556,8 @@ def logs(request: Request, db: Session = Depends(get_db)):
             "error": l.error,
             "via": l.via,
             "spoofed": l.spoofed,
+            "client_key_id": l.clientKeyId,
+            "ttft_ms": l.ttftMs or 0,
         }
         for l in rows
     ]

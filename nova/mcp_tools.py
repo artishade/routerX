@@ -1,19 +1,19 @@
-"""MCP tool plumbing — scopes, search, and the skill catalogue.
+"""
+MCP tool plumbing: scopes, search, and the skill catalogue.
 
-Ported from the OmniRoute MCP surface:
+Three pieces of the RouterX MCP surface, all served from
+nova/data/agent_skills.json so they work offline:
 
-  • `src/shared/constants/mcpScopes.ts` → `SCOPES` / `TOOL_SCOPES`, so a tool
-    can require a scope and a credential can be narrowed to a subset of them
-    (least privilege) instead of "any key can do anything".
-  • `open-sse/mcp-server/toolSearch/search.ts` → `search_tools()`, the lexical
-    scorer used to pick which of N registered plugin tools to show an agent.
-    Deliberately never compiles a regex out of user input, so a hostile query
-    cannot cause backtracking blowups.
-  • `src/shared/constants/agentSkills.ts` → the 46 curated agent skills, served
-    from `nova/data/agent_skills.json` so the console can list them offline.
+  - mcp_scopes / mcp_tool_scopes give every tool the scope it needs, so a
+    credential can be narrowed to a subset of them (least privilege)
+    instead of "any key can do anything".
+  - search_tools() is the lexical scorer that picks which of N registered
+    plugin tools to show an agent. Deliberately never compiles a regex out
+    of user input, so a hostile query cannot cause backtracking blowups.
+  - skills is the curated RouterX agent-skill catalogue the console lists.
 
-`nova.mcp_registry` stays the source of truth for *which* servers a user has
-registered; this module only reasons about the tools they expose.
+nova.mcp_registry stays the source of truth for *which* servers a user
+has registered; this module only reasons about the tools they expose.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from typing import Any, Iterable, Sequence
 
 DATA_FILE = Path(__file__).resolve().parent / "data" / "agent_skills.json"
 
-# Scoring weights, verbatim from OmniRoute's toolSearch.
+# Scoring weights for the lexical tool search.
 NAME_PHRASE_BONUS = 25
 NAME_TOKEN_BONUS = 6
 DESC_PHRASE_BONUS = 20
@@ -49,7 +49,7 @@ def _data() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Scopes — port of mcpScopes.ts
+# Scopes: the least-privilege table
 # --------------------------------------------------------------------------- #
 
 def scopes() -> list[str]:
@@ -85,7 +85,7 @@ def filter_by_scope(tools: Sequence[dict[str, Any]],
 
 
 # --------------------------------------------------------------------------- #
-# Tool search — port of open-sse/mcp-server/toolSearch/search.ts
+# Tool search: lexical and regex-free
 # --------------------------------------------------------------------------- #
 
 def _count_occurrences(haystack: str, needle: str) -> int:
@@ -153,7 +153,7 @@ def search_registered(tools: Sequence[dict[str, Any]], query: str,
 
 
 # --------------------------------------------------------------------------- #
-# Agent skills — port of agentSkills.ts
+# Agent skills: the RouterX skill catalogue
 # --------------------------------------------------------------------------- #
 
 def skills() -> list[dict[str, Any]]:

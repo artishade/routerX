@@ -2,7 +2,7 @@
 
 `nova/routing.py` is deliberately database-free; this is the thin layer that
 binds it to `SystemConfig` (through `nova.kv`) so the dashboard can read and
-write the router's configuration the same way OmniRoute persists its settings:
+write the router's configuration the way RouterX persists its settings:
 
   routing_router      — strategy + scoring weights + lockout tuning
   routing_policies    — access / routing / budget policies

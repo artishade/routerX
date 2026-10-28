@@ -1,8 +1,8 @@
-"""Free AI model catalogue — base model list from ClawLabsAI/free-ai-models.
+"""RouterX free-model catalogue for the built-in RouterX Free engine.
 
-This is the model base for the built-in RouterX Free engine. The bundled snapshot
-lives at ``engine/free-models.json`` — the exact same file the engine sidecar
-reads — and can be refreshed from the upstream repository on demand.
+The bundled snapshot lives at ``engine/free-models.json`` — the exact same file
+the engine sidecar (``engine/index.js``) reads — and carries RouterX's own
+``quality`` score per model (0-100) plus the provider routes the sidecar uses.
 
 Nothing here needs credentials: the keyless providers (Pollinations, OVHcloud)
 always work, and OpenRouter/ZeroLimitAI are used automatically once their key is
@@ -12,17 +12,15 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-
-import httpx
 
 from .config import PROJECT_ROOT
 
 log = logging.getLogger("nova.freemodels")
 
 CATALOGUE_PATH = PROJECT_ROOT / "engine" / "free-models.json"
-UPSTREAM_URL = "https://raw.githubusercontent.com/ClawLabsAI/free-ai-models/main/data/models.json"
-SOURCE_REPO = "https://github.com/ClawLabsAI/free-ai-models"
+# Shown by the sidecar's /health and /models payloads, and stored on the
+# catalogue when it falls back to an empty document.
+SOURCE = "RouterX free-model catalogue"
 
 _cache: dict = {"mtime": None, "data": None}
 
@@ -33,9 +31,9 @@ def _read_file() -> dict:
         data = json.loads(raw)
     except (OSError, ValueError) as err:
         log.warning("free model catalogue unreadable (%s) — using empty catalogue", err)
-        return {"updated_at": None, "source_repo": SOURCE_REPO, "providers": {}, "models": []}
+        return {"updated_at": None, "source": SOURCE, "providers": {}, "models": []}
     if not isinstance(data, dict):
-        return {"updated_at": None, "source_repo": SOURCE_REPO, "providers": {}, "models": []}
+        return {"updated_at": None, "source": SOURCE, "providers": {}, "models": []}
     data.setdefault("providers", {})
     data.setdefault("models", [])
     return data
@@ -134,9 +132,9 @@ def free_model_rows() -> list[dict]:
         provider = m.get("provider") or "free"
         description = f"Free model from {provider}"
         description += f" · {rate}" if rate else " · free tier"
-        duration = m.get("zo_score")
-        if isinstance(duration, (int, float)):
-            description += f" · quality score {duration}/100"
+        quality = m.get("quality", m.get("zo_score"))
+        if isinstance(quality, (int, float)) and not isinstance(quality, bool):
+            description += f" · quality score {quality}/100"
         rows.append(
             {
                 "modelId": model_id,
@@ -157,61 +155,13 @@ def nova_engine_models() -> list[dict]:
     return [*ENGINE_ALIASES, *free_model_rows()]
 
 
-async def refresh_catalogue(timeout: float = 15.0) -> dict:
-    """Pull the live ``data/models.json`` and merge it into the bundled snapshot.
-
-    Only the ``models`` list (and its timestamp) is replaced — the local
-    ``providers`` routing table is always preserved, because the upstream data
-    has no knowledge of RouterX's upstream URLs.
-    """
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        res = await client.get(UPSTREAM_URL)
-        res.raise_for_status()
-        incoming = res.json()
-    if not isinstance(incoming, dict) or not isinstance(incoming.get("models"), list):
-        raise ValueError("upstream free-model catalogue has an unexpected shape")
-
-    local = dict(load_catalogue())
-    local_providers = local.get("providers", {})
-
-    # Keep our route table and attach route info for any brand-new models.
-    new_models = []
-    for m in incoming["models"]:
-        if not isinstance(m, dict):
-            continue
-        entry = dict(m)
-        old = find_free_model(entry.get("id"))
-        route = (old or {}).get("route")
-        if route:
-            entry["route"] = route
-        elif entry.get("kind", "chat") == "chat":
-            entry.setdefault("route", {"provider": "openrouter", "model": entry.get("id")})
-        new_models.append(entry)
-
-    if new_models:
-        local["models"] = new_models
-    local["updated_at"] = incoming.get("updated_at") or local.get("updated_at")
-    local["sources"] = incoming.get("sources") or local.get("sources")
-    local["providers"] = local_providers
-    local["source_repo"] = SOURCE_REPO
-    local["source_data"] = UPSTREAM_URL
-    local["total_free_models"] = len(new_models)
-
-    CATALOGUE_PATH.write_text(json.dumps(local, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    _cache["data"] = None  # force a re-read on next access
-    _cache["mtime"] = None
-    return local
-
-
 __all__ = [
     "CATALOGUE_PATH",
-    "SOURCE_REPO",
-    "UPSTREAM_URL",
+    "SOURCE",
     "chat_models",
     "find_free_model",
     "free_model_rows",
     "load_catalogue",
     "nova_engine_models",
     "provider_info",
-    "refresh_catalogue",
 ]

@@ -4,7 +4,7 @@
   <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-[#0b0b0b]/80 px-4 py-2">
     <div class="flex items-center gap-2">
       <div class="flex size-7 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
-        <i data-lucide="sparkles" class="size-3.5 text-emerald-400"></i>
+        <i data-lucide="sparkles" class="size-3.5 text-emerald-300"></i>
       </div>
       <div>
         <div class="text-xs font-semibold text-slate-100">RouterX Console</div>
@@ -28,13 +28,13 @@
       </select>
       <button id="console-clear" type="button" title="Clear console" aria-label="Clear console" disabled
         class="inline-flex h-8 items-center justify-center rounded-md border border-slate-800 px-2.5 text-slate-400 transition-colors hover:bg-slate-800/60 hover:text-slate-200 disabled:opacity-40">
-        <i data-lucide="eraser" class="size-3.5"></i>
+        <i data-lucide="eraser" class="size-3.5" aria-hidden="true"></i>
       </button>
       {# Custom MCP servers ("plugins") — their tools join the chat + agent. #}
       <button id="console-plugins-btn" type="button"
-        title="Custom MCP servers and plugin tools" aria-label="Custom MCP servers and plugin tools"
+        title="Custom MCP servers and plugin tools" aria-label="Custom MCP servers and plugin tools" aria-haspopup="dialog" aria-controls="console-plugins"
         class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-800 px-2.5 text-[11px] text-slate-400 transition-colors hover:border-emerald-500/40 hover:text-emerald-300">
-        <i data-lucide="plug" class="size-3.5"></i>
+        <i data-lucide="plug" class="size-3.5" aria-hidden="true"></i>
         {% if plugins and plugins.tools %}
         <span class="rounded bg-emerald-500/15 px-1 font-mono text-[10px] text-emerald-300">{{ plugins.tools }}</span>
         {% endif %}
@@ -49,7 +49,7 @@
       <div class="w-full max-w-2xl">
         <div class="mb-6 text-center">
           <div class="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
-            <i data-lucide="sparkles" class="size-6 text-emerald-400"></i>
+            <i data-lucide="sparkles" class="size-6 text-emerald-300"></i>
           </div>
           <h2 class="text-lg font-semibold text-slate-100">RouterX Console</h2>
           <p class="mt-1 text-sm text-slate-400">One chatbox — chat with the gateway, run sandbox commands and launch autonomous tasks.</p>
@@ -57,7 +57,7 @@
         <div class="grid gap-3 sm:grid-cols-3">
           <div class="rounded-xl border border-slate-800 bg-[#0b0b0b] p-4">
             <div class="mb-2 flex size-8 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
-              <i data-lucide="messages-square" class="size-4 text-emerald-400"></i>
+              <i data-lucide="messages-square" class="size-4 text-emerald-300"></i>
             </div>
             <div class="text-sm font-semibold text-slate-100">Chat</div>
             <p class="mt-1 text-[11px] leading-relaxed text-slate-500">Ask anything — answered through the live gateway routing pipeline.</p>
@@ -91,14 +91,14 @@
         </div>
         {% if tools %}
         <div class="mt-5 rounded-xl border border-slate-800 bg-[#0b0b0b] p-3">
-          <div class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+          <div class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
             <i data-lucide="wrench" class="size-3"></i>
             Agent toolbox
           </div>
           <div class="flex flex-wrap gap-1.5">
             {% for t in tools %}
             <span class="inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-black/30 px-2 py-1 text-[10px] text-slate-400" title="{{ t.description }}">
-              <i data-lucide="{{ t.icon }}" class="size-3 text-emerald-400"></i>{{ t.name }}
+              <i data-lucide="{{ t.icon }}" class="size-3 text-emerald-300"></i>{{ t.name }}
             </span>
             {% endfor %}
           </div>
@@ -149,11 +149,11 @@
             </span>
             <button id="console-stop" type="button" title="Stop generating" aria-label="Stop generating"
               class="hidden h-9 items-center gap-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 text-xs text-rose-300 transition-colors hover:bg-rose-500/20">
-              <i data-lucide="circle-stop" class="size-3.5"></i>Stop
+              <i data-lucide="circle-stop" class="size-3.5" aria-hidden="true"></i>Stop
             </button>
             <button id="console-send" type="button" aria-label="Send message" disabled
-              class="inline-flex h-9 items-center gap-1.5 rounded-md bg-emerald-500/90 px-4 text-sm font-medium text-white transition-colors hover:bg-emerald-400 disabled:opacity-40">
-              <i data-lucide="send" class="size-4"></i>Send
+              class="inline-flex h-9 items-center gap-1.5 rounded-md bg-emerald-500/90 px-4 text-sm font-medium text-white transition-colors hover:bg-emerald-300 disabled:opacity-40">
+              <i data-lucide="send" class="size-4" aria-hidden="true"></i>Send
             </button>
           </div>
         </div>
@@ -170,7 +170,7 @@
       <div class="flex shrink-0 items-center justify-between gap-2 border-b border-slate-800 bg-[#0b0b0b]/80 px-3 py-2">
         <div class="flex min-w-0 items-center gap-2.5">
           <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
-            <i data-lucide="plug" class="size-4 text-emerald-400"></i>
+            <i data-lucide="plug" class="size-4 text-emerald-300"></i>
           </span>
           <div class="min-w-0">
             <div class="truncate text-sm font-semibold text-slate-100">MCP servers &amp; plugins</div>
@@ -185,7 +185,7 @@
         </div>
         <button id="console-plugins-close" type="button" title="Close plugins" aria-label="Close plugins"
           class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-800/70 hover:text-slate-300">
-          <i data-lucide="x" class="size-4"></i>
+          <i data-lucide="x" class="size-4" aria-hidden="true"></i>
         </button>
       </div>
       <div id="console-plugins-body" class="flex-1 overflow-y-auto p-3">
@@ -361,7 +361,7 @@
   function chipsHtml(m) {
     if (!m.nova) return '';
     const chips = [];
-    chips.push('<span class="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"><i data-lucide="sparkles" class="size-3 text-emerald-400"></i>' + esc(m.nova.provider) + '</span>');
+    chips.push('<span class="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"><i data-lucide="sparkles" class="size-3 text-emerald-300"></i>' + esc(m.nova.provider) + '</span>');
     chips.push('<span class="rounded-md border border-slate-800 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">' + esc(m.nova.upstream_model) + '</span>');
     if (m.nova.fallback) chips.push('<span class="rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">fallback' + (m.nova.stage ? ' · stage ' + m.nova.stage : '') + '</span>');
     if (m.nova.spoofed) chips.push('<span class="rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[10px] text-purple-300">identity spoofed</span>');
@@ -438,14 +438,14 @@
     const startedAt = (task && (task.started_at || task.created_at)) || m.at;
     const finishedAt = (task && task.finished_at) ? task.finished_at : (running ? now : startedAt);
     const stopBtn = running
-      ? '<button type="button" data-agent-cancel="' + esc(m.taskId) + '" class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-rose-500/30 px-2.5 text-xs text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200"><i data-lucide="circle-stop" class="size-3.5"></i>Stop</button>'
+      ? '<button type="button" data-agent-cancel="' + esc(m.taskId) + '" class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-rose-500/30 px-2.5 text-xs text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200"><i data-lucide="circle-stop" class="size-3.5" aria-hidden="true"></i>Stop</button>'
       : '';
     const header = '' +
       '<div class="flex items-start gap-3 border-b border-slate-800/80 bg-slate-900/40 px-4 py-3">' +
-        '<div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10"><i data-lucide="bot" class="size-4 text-emerald-400"></i></div>' +
+        '<div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10"><i data-lucide="bot" class="size-4 text-emerald-300"></i></div>' +
         '<div class="min-w-0 flex-1">' +
           '<div class="flex flex-wrap items-center gap-2">' +
-            '<span class="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">RouterX Agent</span>' +
+            '<span class="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">RouterX Agent</span>' +
             agentStatusBadge(task ? task.status : 'queued') +
             '<span class="inline-flex items-center gap-1 font-mono text-[10px] text-slate-500"><i data-lucide="clock" class="size-3"></i>' + elapsedLabel(startedAt, finishedAt) + '</span>' +
             '<span class="font-mono text-[10px] text-slate-600">steps ' + done + '/' + m.maxSteps + '</span>' +
@@ -456,18 +456,18 @@
       '</div>';
     let body = '';
     if (!steps.length && running) {
-      const dots = [0, 1, 2].map((i) => '<span class="size-1.5 animate-pulse rounded-full bg-emerald-400" style="animation-delay:' + (i * 180) + 'ms"></span>').join('');
+      const dots = [0, 1, 2].map((i) => '<span class="size-1.5 animate-pulse rounded-full bg-emerald-300" style="animation-delay:' + (i * 180) + 'ms"></span>').join('');
       body += '<div class="flex items-center gap-2 text-xs text-slate-500"><span class="flex gap-1">' + dots + '</span>Planning first move…</div>';
     }
     body += '<ol class="space-y-2">' + steps.map((s) => stepHtml(m, s)).join('') + '</ol>';
     if (running && steps.length) {
-      body += '<div class="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><i data-lucide="loader-2" class="size-3 animate-spin text-emerald-400"></i>Working — step ' + done + ' of ' + m.maxSteps + '…</div>';
+      body += '<div class="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><i data-lucide="loader-2" class="size-3 animate-spin text-emerald-300"></i>Working — step ' + done + ' of ' + m.maxSteps + '…</div>';
     }
     let summary = '';
     if (task && (task.status === 'completed' || task.status === 'failed')) {
       summary = task.status === 'failed'
         ? '<div class="border-t border-slate-800/80 px-4 py-3"><p class="text-xs text-rose-300">Task failed: ' + esc(task.error || 'unknown error') + '</p></div>'
-        : '<div class="border-t border-slate-800/80 px-4 py-3"><div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-400"><i data-lucide="check-circle-2" class="size-3.5"></i>Result</div><div class="md-body text-[13px] text-slate-300">' + md(task.summary || '(no summary)') + '</div></div>';
+        : '<div class="border-t border-slate-800/80 px-4 py-3"><div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-300"><i data-lucide="check-circle-2" class="size-3.5"></i>Result</div><div class="md-body text-[13px] text-slate-300">' + md(task.summary || '(no summary)') + '</div></div>';
     }
     return header + '<div class="max-h-80 overflow-y-auto px-4 py-3">' + body + '</div>' + summary;
   }
@@ -477,7 +477,7 @@
     if (m.error) {
       body = '<p class="flex items-start gap-1.5 text-rose-300"><i data-lucide="x-circle" class="mt-0.5 size-4 shrink-0"></i><span class="min-w-0 break-words">' + esc(m.error) + '</span></p>';
     } else if (m.streaming) {
-      body = '<div class="md-body text-slate-200"><span class="whitespace-pre-wrap break-words">' + esc(m.content) + '</span><span class="nova-caret text-emerald-400">▌</span></div>';
+      body = '<div class="md-body text-slate-200"><span class="whitespace-pre-wrap break-words">' + esc(m.content) + '</span><span class="nova-caret text-emerald-300">▌</span></div>';
     } else {
       body = '<div class="md-body text-slate-200">' + (md(m.content) || '<p class="text-slate-500">(empty response)</p>') + '</div>';
     }
@@ -575,7 +575,7 @@
     if (sendBtn) {
       sendBtn.innerHTML = chatPending
         ? '<i data-lucide="loader-2" class="size-4 animate-spin"></i>Send'
-        : '<i data-lucide="send" class="size-4"></i>Send';
+        : '<i data-lucide="send" class="size-4" aria-hidden="true"></i>Send';
     }
     updateAgentBadge();
     icons();
@@ -782,7 +782,7 @@
       let buf = '';
       const paint = () => {
         const el = document.querySelector('#console-msg-' + m.id + ' .md-body');
-        if (el) el.innerHTML = '<span class="whitespace-pre-wrap break-words">' + esc(m.content) + '</span><span class="nova-caret text-emerald-400">▌</span>';
+        if (el) el.innerHTML = '<span class="whitespace-pre-wrap break-words">' + esc(m.content) + '</span><span class="nova-caret text-emerald-300">▌</span>';
         scrollStream(false);
       };
       for (;;) {

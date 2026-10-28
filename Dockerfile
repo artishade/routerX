@@ -2,8 +2,7 @@
 # ============================================================================ #
 # RouterX — 100% Python server (FastAPI + Jinja2 UI + SQLAlchemy), plus a
 # dependency-free bun sidecar for the built-in RouterX Free engine, which routes
-# onto the free AI model set from ClawLabsAI/free-ai-models
-# (engine/free-models.json).
+# onto the bundled RouterX free-model catalogue (engine/free-models.json).
 # The server binds 0.0.0.0:$PORT (Render assigns PORT dynamically).
 # ============================================================================ #
 

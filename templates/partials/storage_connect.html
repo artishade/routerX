@@ -1,7 +1,7 @@
 {# Storage provider connect dialog — port of the Connect Dialog in StorageTab.tsx.
    Context: provider, fields[{key,label,password,placeholder}], note, link_label, link_url, error, values #}
 <dialog id="st-connect-dialog" aria-label="Connect {{ provider.name }}"
-  class="h-fit w-[calc(100%-2rem)] max-w-md rounded-xl border border-slate-800 bg-[#0b0b0b] p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
+  class="h-fit w-[calc(100%-2rem)] max-w-md nx-panel p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
   <form hx-post="/ui/storage/connect" hx-target="#st-connect-zone" hx-swap="innerHTML">
     <input type="hidden" name="provider_key" value="{{ provider.id }}" />
     <h3 class="flex items-center gap-2 text-base font-semibold text-slate-100">

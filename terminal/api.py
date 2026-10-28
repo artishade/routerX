@@ -21,7 +21,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from terminal import link
-from terminal.link import SessionGone, SessionLimitReached, TerminalError
+from terminal.link import PTYUnsupported, SessionGone, SessionLimitReached, TerminalError
+from terminal.pty import PTY_SUPPORTED
 
 router = APIRouter()
 
@@ -242,6 +243,12 @@ async def run(request: Request):
     except TerminalError as err:
         return _fail(err)
     if result is None:
+        if not PTY_SUPPORTED:
+            # Honest cause: there is no shell to run in, and none can start.
+            return _fail(PTYUnsupported(
+                "interactive PTY sessions need a POSIX host (Linux/macOS); "
+                "the sandbox command path still works."
+            ))
         return _fail(SessionGone("no terminal session is available"))
     output, code = result
     return {"ok": True, "output": output, "code": code}

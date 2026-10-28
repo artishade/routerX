@@ -100,13 +100,27 @@ class ProviderProtocolTests(unittest.IsolatedAsyncioTestCase):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         try:
             with patch.object(gateway, "NONSTREAM_CLIENT", client), patch("nova.database.SessionLocal") as session:
-                session.return_value.__enter__.return_value.scalars.return_value.first.return_value = SimpleNamespace(apiKey="test-token", cooldownUntil=None)
+                self._one_key(session)
                 result = await gateway.attempt_upstream(
                     row("openai", "https://example.test/v1"),
                     [{"role": "user", "content": "hello"}], None)
             self.assertIsNone(result)
         finally:
             await client.aclose()
+
+    @staticmethod
+    def _one_key(session):
+        """Wire the mocked session so key selection sees exactly one key row.
+
+        Key selection reads `session.scalars(...).all()` (it needs the whole
+        provider's key list to pick a non-cooling one), so the mock returns the
+        same single row for `all()` and `first()`.
+        """
+        row = SimpleNamespace(apiKey="test-token", cooldownUntil=None, id=1,
+                              label="test", enabled=True, weight=1)
+        scalars = session.return_value.__enter__.return_value.scalars.return_value
+        scalars.first.return_value = row
+        scalars.all.return_value = [row]
 
     def test_schema_sync_ddl_is_additive(self):
         from sqlalchemy import Boolean, Column
@@ -129,7 +143,7 @@ class ProviderProtocolTests(unittest.IsolatedAsyncioTestCase):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         try:
             with patch.object(gateway, "NONSTREAM_CLIENT", client), patch("nova.database.SessionLocal") as session:
-                session.return_value.__enter__.return_value.scalars.return_value.first.return_value = SimpleNamespace(apiKey="test-token", cooldownUntil=None)
+                self._one_key(session)
                 result = await gateway.attempt_upstream(row(), [{"role": "user", "content": "hello"}], None)
             self.assertEqual(result["content"], "hi")
             self.assertEqual(result["usage"]["prompt_tokens"], 2)
@@ -151,7 +165,7 @@ class ProviderProtocolTests(unittest.IsolatedAsyncioTestCase):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         try:
             with patch.object(gateway, "UPSTREAM_CLIENT", client), patch.object(gateway, "NONSTREAM_CLIENT", client), patch.object(gateway, "select_upstream_key_sync", return_value={"apiKey": "test-token"}), patch("nova.database.SessionLocal") as session:
-                session.return_value.__enter__.return_value.scalars.return_value.first.return_value = SimpleNamespace(apiKey="test-token", cooldownUntil=None)
+                self._one_key(session)
                 worker = await gateway.attempt_upstream(row("openai", "https://example.workers.dev/v1"), [{"role": "user", "content": "hello"}], None)
                 self.assertEqual(worker["content"], "worker works")
                 iterator, _, _ = await gateway.attempt_upstream_stream(row(), [{"role": "user", "content": "hello"}], None)

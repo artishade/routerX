@@ -22,7 +22,7 @@
   {% endif %}
   <div class="nova-scroll max-h-[calc(100vh-330px)] space-y-4 overflow-y-auto pr-1">
     {% for p in visible %}
-    <div class="overflow-hidden rounded-xl border border-slate-800 bg-[#0b0b0b]/80" style="border-left: 3px solid {{ p.color or '#b01414' }}">
+    <div class="overflow-hidden nx-panel" style="border-left: 3px solid {{ p.color or '#b01414' }}">
       <div class="p-4">
         {# ------------------------------ card header ------------------------------ #}
         <div class="flex flex-wrap items-center gap-2">

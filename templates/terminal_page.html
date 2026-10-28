@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark no-js">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
@@ -11,7 +11,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     html { background: #050505; color: #e5e5e5; }
-    body { margin: 0; font-family: Geist, ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; font-family: Geist, ui-sans-serif, system-ui, sans-serif; background: #050505; }
+    /* No-JS / CDN-down fallback: never leave a reveal target invisible. */
+    html.no-js .nx-reveal { opacity: 1 !important; transform: none !important; animation: none !important; }
   </style>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -23,6 +25,26 @@
             sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif'],
             mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
           },
+          // Same RouterX ramp as the dashboard (templates/base.html): emerald-*
+          // is the darkest-red accent, slate-* the neutral ramp.
+          colors: {
+            emerald: {
+              50: '#fdf2f1', 100: '#fbe3e1', 200: '#f6c9c4', 300: '#e8564a',
+              400: '#da4f43', 500: '#a8281b', 600: '#7f1d14', 700: '#5e140e',
+              800: '#3d0d09', 900: '#2a0906', 950: '#170504',
+            },
+            slate: {
+              50: '#fafafa', 100: '#f5f5f5', 200: '#e5e5e5', 300: '#d4d4d4',
+              400: '#a3a3a3', 500: '#737373', 600: '#525252', 700: '#404040',
+              800: '#262626', 900: '#171717', 950: '#0a0a0a',
+            },
+            // Kept identical to templates/base.html (the dashboard shell).
+            rose: {
+              50: '#fff1f2', 100: '#ffe4e6', 200: '#fecdd8', 300: '#fba3b0',
+              400: '#f87171', 500: '#ea580c', 600: '#c2321f', 700: '#a01a10',
+              800: '#881313', 900: '#71221a', 950: '#450a05',
+            },
+          },
         },
       },
     };
@@ -33,10 +55,18 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-  <link rel="stylesheet" href="/static/nova.css?v=7" />
-  <script src="/static/app.js?v=5" defer></script>
+  <link rel="stylesheet" href="/static/nova.css?v=8" />
+  <link rel="stylesheet" href="/static/nova-world.css?v=1" />
+  <script src="/static/app.js?v=6" defer></script>
 </head>
-<body class="bg-[#050505] font-sans text-slate-200 antialiased">
+<body class="nx-grain bg-[#050505] font-sans text-slate-200 antialiased">
+  {# Layered backdrop — fixed, z-index:-1, pointer-events:none (same as the dashboard). #}
+  <div class="nx-world" aria-hidden="true">
+    <div class="nx-aurora"></div>
+    <div class="nx-mesh"></div>
+    <div class="nx-scan"></div>
+    <div class="nx-vignette"></div>
+  </div>
   {# Slim top bar — the page is meant to fill a whole browser tab. #}
   <div class="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-slate-800 bg-[#070707] px-3">
     <div class="flex min-w-0 items-center gap-2.5">
@@ -47,7 +77,7 @@
       </div>
     </div>
     <div class="flex shrink-0 items-center gap-1.5">
-      <button type="button" onclick="window.open('/terminal', '_blank')" title="Open this workspace in another tab"
+      <button type="button" onclick="window.open('/terminal', '_blank')" title="Open this workspace in another tab" aria-label="Open this workspace in another tab"
         class="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-800/70 hover:text-slate-300">
         <i data-lucide="external-link" class="size-3.5"></i>
       </button>
@@ -69,8 +99,8 @@
       class="ws-sheet flex w-full shrink-0 flex-col overflow-hidden rounded-xl border border-slate-800 bg-[#070707] xl:w-[420px]">
       <div class="flex shrink-0 items-center justify-between gap-2 border-b border-slate-800 bg-[#0b0b0b]/70 px-3 py-2">
         <div class="flex min-w-0 items-center gap-2.5">
-          <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-sky-500/30 bg-sky-500/10">
-            <i data-lucide="sparkles" class="size-4 text-sky-400"></i>
+          <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
+            <i data-lucide="sparkles" class="size-4 text-emerald-300"></i>
           </span>
           <div class="min-w-0">
             <h2 class="truncate text-sm font-semibold leading-tight text-slate-100">RouterX Console</h2>
@@ -85,10 +115,10 @@
 
       <div id="term-side-body" class="flex min-h-0 flex-1 flex-col">
         <div id="term-side-stream" class="flex-1 space-y-3 overflow-y-auto px-3 py-3" aria-live="polite">
-          <div class="rounded-xl border border-slate-800 bg-[#0b0b0b] px-3 py-2.5 text-[12px] leading-relaxed text-slate-400">
+          <div class="nx-panel px-3 py-2.5 text-[12px] leading-relaxed text-slate-400">
             Ask a question, or start a line with a prefix:
             <div class="mt-1.5 space-y-1 font-mono text-[11px]">
-              <div><span class="text-sky-300">$</span> <span class="text-slate-500">run a shell command</span></div>
+              <div><span class="text-emerald-300">$</span> <span class="text-slate-500">run a shell command</span></div>
               <div><span class="text-purple-300">!</span> <span class="text-slate-500">hand a task to the agent — it runs in its own terminal tab</span></div>
               <div><span class="text-amber-300">/</span> <span class="text-slate-500">shortcut — status, models, keys</span></div>
             </div>
@@ -103,7 +133,7 @@
             </div>
           </div>
           {% if tools %}
-          <div class="rounded-xl border border-slate-800 bg-[#0b0b0b] p-3">
+          <div class="nx-panel p-3">
             <div class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
               <i data-lucide="wrench" class="size-3"></i>
               Permanently registered tools
@@ -122,11 +152,11 @@
           {# chat target pickers: model (grouped by provider) + reasoning effort #}
           <div class="mb-1.5 flex items-center gap-1.5">
             <select id="ws-model" aria-label="Chat model"
-              class="h-7 min-w-0 flex-1 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-sky-500/40 focus:outline-none">
+              class="h-7 min-w-0 flex-1 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-emerald-500/40 focus:outline-none">
               <option value="auto">model: auto — gateway routes</option>
             </select>
             <select id="ws-effort" aria-label="Reasoning effort"
-              class="h-7 w-[104px] shrink-0 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-sky-500/40 focus:outline-none">
+              class="h-7 w-[104px] shrink-0 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-emerald-500/40 focus:outline-none">
               <option value="">effort: default</option>
               <option value="minimal">minimal</option>
               <option value="low">low</option>
@@ -144,7 +174,7 @@
           <div class="mt-1 flex items-center justify-between gap-2">
             <span id="term-side-mode" class="truncate font-mono text-[10px] text-slate-600">chat</span>
             <button id="term-side-send" type="button" aria-label="Send message"
-              class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-sky-500/90 px-3 text-[11px] font-medium text-white transition-colors hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50">
+              class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-emerald-500/90 px-3 text-[11px] font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
               <i data-lucide="send" class="size-3.5"></i>Send
             </button>
           </div>
@@ -192,7 +222,7 @@
             class="inline-flex size-7 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-slate-700 hover:text-slate-300">
             <i data-lucide="eraser" class="size-3.5"></i>
           </button>
-          <button id="term-wipe" type="button" title="Delete the saved command history"
+          <button id="term-wipe" type="button" title="Delete the saved command history" aria-label="Delete the saved command history"
             class="inline-flex size-7 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-rose-500/40 hover:text-rose-300"
             hx-post="/ui/terminal/clear" hx-swap="none" hx-confirm="Delete all saved terminal history?">
             <i data-lucide="trash-2" class="size-3.5"></i>
@@ -317,8 +347,8 @@
           </span>
         </button>
         <button type="button" data-sheet-open="chat"
-          class="flex items-center gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-left active:bg-sky-500/20">
-          <i data-lucide="message-circle" class="size-5 shrink-0 text-sky-400"></i>
+          class="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-left active:bg-emerald-500/20">
+          <i data-lucide="message-circle" class="size-5 shrink-0 text-emerald-300"></i>
           <span class="min-w-0">
             <span class="block text-sm font-medium text-slate-100">RouterX Console</span>
             <span class="block truncate font-mono text-[10px] text-slate-500">chat · $ commands · ! agent tasks</span>

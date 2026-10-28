@@ -1,0 +1,151 @@
+{# Playground tab — talk to this gateway the way an API client would.
+   Server-side posts (HTMX) render the answer; the streaming toggle is handled
+   by initPlayground() in static/app.js (text/event-stream over fetch). #}
+<div id="tab-playground" class="flex flex-col gap-4">
+
+  {# ------------------------------ Hero bar ------------------------------ #}
+  <div class="nx-panel nx-static flex flex-wrap items-center justify-between gap-3 p-4">
+    <div class="min-w-0">
+      <div class="nx-kicker">Operate · live gateway</div>
+      <h2 class="nx-display mt-1 text-lg font-semibold tracking-tight">Playground</h2>
+      <p class="mt-0.5 text-xs text-slate-400">Requests go through <span class="font-mono text-slate-300">POST /v1/chat/completions</span> on this gateway — the reply is exactly what an API client sees.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-1.5">
+      <span class="inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+        <i data-lucide="shield-check" class="size-3 text-emerald-300" aria-hidden="true"></i>identity spoofing
+      </span>
+      <span class="inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+        <i data-lucide="git-branch" class="size-3 text-emerald-300" aria-hidden="true"></i>fallback chain
+      </span>
+      <span class="inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+        <i data-lucide="life-buoy" class="size-3 text-emerald-300" aria-hidden="true"></i>free engine last
+      </span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
+
+    {# --------------------------- Conversation --------------------------- #}
+    <section class="nx-panel nx-static flex min-h-[28rem] flex-col overflow-hidden" aria-labelledby="pg-title">
+      <div class="flex shrink-0 items-center justify-between gap-2 border-b border-slate-800/80 px-4 py-2.5">
+        <div class="flex min-w-0 items-center gap-2">
+          <span class="flex size-7 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
+            <i data-lucide="flask-conical" class="size-3.5 text-emerald-300" aria-hidden="true"></i>
+          </span>
+          <h3 id="pg-title" class="truncate text-xs font-semibold uppercase tracking-widest text-slate-400">Conversation</h3>
+        </div>
+        <button type="button" id="pg-clear" title="Clear this conversation" aria-label="Clear the conversation"
+          class="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-800/70 hover:text-slate-200">
+          <i data-lucide="trash-2" class="size-3.5" aria-hidden="true"></i>
+        </button>
+      </div>
+
+      <div id="pg-stream" class="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4" aria-live="polite" aria-busy="false" aria-relevant="additions text">
+        <div id="pg-empty" class="m-auto max-w-sm text-center">
+          <div class="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10 nx-glow-red">
+            <i data-lucide="flask-conical" class="size-6 text-emerald-300" aria-hidden="true"></i>
+          </div>
+          <p class="text-sm font-medium text-slate-200">Nothing sent yet</p>
+          <p class="mt-1 text-xs leading-relaxed text-slate-500">Pick a model, write a message and send it. Every reply shows which provider actually served it, at which fallback stage.</p>
+        </div>
+        <div id="pg-result"></div>
+      </div>
+
+      <div class="shrink-0 border-t border-slate-800/80 bg-[#0b0b0b]/60 p-3">
+        <label for="pg-message" class="sr-only">Message</label>
+        <textarea id="pg-message" name="message" rows="3" placeholder="Ask anything through the gateway…"
+          class="w-full resize-none rounded-lg border border-slate-800 bg-[#050505] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"></textarea>
+        <div class="mt-2 flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 text-[10px] text-slate-500">
+            <span id="pg-status" class="font-mono">idle</span>
+            <span class="hidden text-slate-700 sm:inline">·</span>
+            <span class="hidden sm:inline">Ctrl + Enter sends</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="pg-busy" class="hidden items-center gap-1.5 text-[11px] text-slate-400">
+              <i data-lucide="loader-2" class="size-3.5 animate-spin text-emerald-300" aria-hidden="true"></i>sending
+            </span>
+            <button id="pg-send" type="submit"
+              class="inline-flex h-8 items-center gap-1.5 rounded-md bg-emerald-500/90 px-3.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
+              <i data-lucide="send" class="size-3.5" aria-hidden="true"></i>Send
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {# Native form (works with or without JS; initPlayground intercepts it in
+         streaming mode). Grays out inputs while a request is in flight. #}
+      <form id="pg-form" class="hidden" novalidate hx-post="/ui/playground/send" hx-target="#pg-result"
+        hx-swap="beforeend" hx-indicator="#pg-busy" hx-disabled-elt="find button">
+        <input type="hidden" name="model" class="pg-c-model" />
+        <input type="hidden" name="system" class="pg-c-system" />
+        <input type="hidden" name="temperature" class="pg-c-temperature" />
+        <input type="hidden" name="max_tokens" class="pg-c-max-tokens" />
+        <input type="hidden" name="message" class="pg-c-message" />
+      </form>
+    </section>
+
+    {# ------------------------------ Settings ----------------------------- #}
+    <aside class="flex flex-col gap-4">
+      <div class="nx-panel nx-static p-4">
+        <h3 class="nx-kicker mb-3">Request</h3>
+        <div class="space-y-3">
+          <div class="space-y-1">
+            <div class="flex items-center justify-between gap-2">
+              <label for="pg-model" class="text-[11px] font-medium text-slate-300">Model</label>
+              <button type="button" id="pg-models-refresh" title="Reload the model list" aria-label="Reload the model list"
+                class="inline-flex size-5 items-center justify-center rounded text-slate-500 transition-colors hover:text-emerald-300">
+                <i data-lucide="refresh-cw" class="size-3" aria-hidden="true"></i>
+              </button>
+            </div>
+            <select id="pg-model" aria-label="Model to request"
+              class="w-full rounded-md border border-slate-800 bg-[#050505] px-2 py-1.5 font-mono text-[11px] text-slate-200 focus:border-emerald-500/50 focus:outline-none">
+              <option value="auto">auto — let the gateway route</option>
+              {% for m in models %}
+              <option value="{{ m.id }}">{{ m.id }}{% if m.owned_by %} · {{ m.owned_by }}{% endif %}</option>
+              {% endfor %}
+            </select>
+            <p id="pg-models-note" class="text-[10px] text-slate-600 {% if models %}hidden{% endif %}">Model list unavailable — "auto" still routes through the fallback chain.</p>
+          </div>
+
+          <div class="space-y-1">
+            <label for="pg-system" class="text-[11px] font-medium text-slate-300">System prompt</label>
+            <textarea id="pg-system" rows="3" placeholder="Optional — sets the assistant's behaviour"
+              class="w-full resize-none rounded-md border border-slate-800 bg-[#050505] px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"></textarea>
+          </div>
+
+          <div class="space-y-1">
+            <div class="flex items-center justify-between">
+              <label for="pg-temperature" class="text-[11px] font-medium text-slate-300">Temperature</label>
+              <span id="pg-temperature-val" class="font-mono text-[11px] text-emerald-300">0.7</span>
+            </div>
+            <input id="pg-temperature" type="range" min="0" max="2" step="0.1" value="0.7"
+              aria-label="Temperature" class="w-full accent-emerald-400" />
+          </div>
+
+          <div class="space-y-1">
+            <label for="pg-max-tokens" class="text-[11px] font-medium text-slate-300">Max tokens</label>
+            <input id="pg-max-tokens" type="number" min="1" max="32768" step="1" value="1024"
+              class="w-full rounded-md border border-slate-800 bg-[#050505] px-2 py-1.5 font-mono text-[11px] text-slate-200 focus:border-emerald-500/50 focus:outline-none" />
+          </div>
+
+          <label class="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-slate-800 bg-[#050505] px-2.5 py-2">
+            <span class="text-[11px] font-medium text-slate-300">Stream the reply</span>
+            <input id="pg-streaming" type="checkbox" class="peer sr-only" aria-label="Stream the reply token by token" />
+            <span class="relative h-4 w-7 shrink-0 rounded-full bg-slate-700 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-slate-300 after:transition-transform peer-checked:bg-emerald-500/80 peer-checked:after:translate-x-3" aria-hidden="true"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="nx-panel nx-static p-4">
+        <h3 class="nx-kicker mb-2">What the chips mean</h3>
+        <dl class="space-y-1.5 text-[10px] leading-relaxed text-slate-500">
+          <div><dt class="inline font-medium text-slate-300">Stage</dt> — 1 is the direct attempt, higher numbers are fallback hops.</div>
+          <div><dt class="inline font-medium text-slate-300">Fallback</dt> — the requested model was not the one that served it.</div>
+          <div><dt class="inline font-medium text-slate-300">Cached</dt> — the reply came from the gateway cache.</div>
+          <div><dt class="inline font-medium text-slate-300">Spoofed</dt> — the response keeps the id the client asked for.</div>
+        </dl>
+      </div>
+    </aside>
+  </div>
+</div>

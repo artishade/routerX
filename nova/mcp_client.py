@@ -15,13 +15,15 @@ like the permanent builtin toolbox. Two transports are supported:
 
 Everything here is fail-soft: a broken plugin reports an honest error string
 and never takes the gateway down. Nothing is executed through a shell — stdio
-commands are argv-split with shlex and run with exec, no `shell=True`.
+commands are argv-split and run with exec, no `shell=True`.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import os
+import re
 import shlex
 import time
 from typing import Any
@@ -222,6 +224,47 @@ async def _rpc_http(server: dict, message: dict, timeout: float) -> dict | None:
 # stdio transport — one cached child process per server
 # --------------------------------------------------------------------------- #
 
+_DRIVE_PATH_RE = re.compile(r"^(?P<drive>[A-Za-z]):(?P<rest>[^/\\].*)$")
+_SURROUNDING_QUOTES = ("\"", "'")
+
+
+def _split_command(raw: str) -> list[str]:
+    """Split an admin-supplied stdio command into argv, shell-free.
+
+    `shlex` must keep backslashes on Windows, or a POSIX split eats the
+    separators in `C:\\Users\\...\\python.exe` and the spawn fails with
+    `[WinError 2]`. A mangled drive path is also repaired when — and only
+    when — the repaired path exists on disk, so a genuine `C:name`
+    argument is never guessed at.
+    """
+    posix = os.name != "nt"
+    argv = [
+        _repair_drive_path(_unquote(part, posix))
+        for part in shlex.split(raw, posix=posix)
+    ]
+    return argv
+
+
+def _unquote(arg: str, posix: bool) -> str:
+    """`shlex` keeps a leading quote in non-POSIX mode; a lone quoted path
+    (the common Windows case) would otherwise reach exec with its quotes."""
+    if posix or len(arg) < 2:
+        return arg
+    if arg[0] in _SURROUNDING_QUOTES and arg[-1] == arg[0]:
+        return arg[1:-1]
+    return arg
+
+
+def _repair_drive_path(arg: str) -> str:
+    match = _DRIVE_PATH_RE.match(arg)
+    if not match:
+        return arg
+    # `C:name` is a drive-relative path, so a bare existence check is not
+    # enough: the repaired form must be an absolute file that exists.
+    repaired = match.group("drive") + ":\\" + match.group("rest")
+    return repaired if os.path.isfile(repaired) else arg
+
+
 class _StdioSession:
     def __init__(self, server: dict):
         self.server = server
@@ -234,7 +277,7 @@ class _StdioSession:
         if not raw:
             raise McpError(f"{self.server['id']}: no command configured")
         try:
-            argv = shlex.split(raw)
+            argv = _split_command(raw)
         except ValueError as exc:
             raise McpError(f"{self.server['id']}: bad command ({exc})") from exc
         if not argv:

@@ -1,7 +1,7 @@
 {# Fallback resolution preview dialog — port of the preview Dialog in RoutesTab.tsx.
    Context: preview = RoutePreview {model, direct, explicit_chain, auto_allowed, stages[], spoof_model} #}
 <dialog id="rt-preview-dialog" aria-label="Fallback resolution preview"
-  class="h-fit w-[calc(100%-2rem)] max-w-lg rounded-xl border border-slate-800 bg-[#0b0b0b] p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
+  class="h-fit w-[calc(100%-2rem)] max-w-lg nx-panel p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
   <div class="flex items-start justify-between gap-3">
     <div class="min-w-0">
       <h3 class="truncate font-mono text-sm text-emerald-300">{{ preview.model }}</h3>

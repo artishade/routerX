@@ -1,4 +1,4 @@
-"""Models tab — Python UI port of src/components/nova/tabs/ModelsTab.tsx.
+"""Models tab — server-rendered tab over /api/admin/models.
 
 Fragments:
   GET /partials/tab/models      full tab (list root + detail dialog slot)
@@ -35,10 +35,10 @@ STATUS_STYLES: dict[str, dict[str, str]] = {
     "unknown": {"dot": "bg-slate-500", "chip": "border-slate-700 bg-slate-900/60 text-slate-400"},
 }
 
+# The curated catalogue is ~86 models, so one page shows everything. These
+# caps only bound a database that grew through live discovery; the header says
+# "N of M" whenever the list cap actually bites.
 HEALTH_PAGE_SIZE = 200
-# The OmniRoute catalogue brings thousands of models, so the tab renders a
-# bounded first page and the header says "N of M". Narrow it down with the
-# search box or the provider filter to reach anything past the page.
 LIST_PAGE_SIZE = 250
 
 # --------------------------------------------------------------------------- #

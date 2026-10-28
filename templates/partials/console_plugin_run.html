@@ -7,7 +7,7 @@
     <div class="min-w-0 text-[10px] font-semibold uppercase tracking-wider {{ 'text-green-400' if ok else 'text-rose-400' }}">
       {{ server }}::{{ tool }}
     </div>
-    <button type="button" hx-get="/ui/console/plugins/run?server={{ server }}&tool={{ tool }}"
+    <button type="button" title="Run tool again" aria-label="Run tool again" hx-get="/ui/console/plugins/run?server={{ server }}&tool={{ tool }}"
       hx-target="#console-plugins-run" hx-swap="innerHTML"
       class="inline-flex size-6 items-center justify-center rounded-md border border-slate-800 text-slate-500 hover:text-slate-300">
       <i data-lucide="rotate-ccw" class="size-3"></i>
@@ -17,7 +17,7 @@
 </div>
 {% else %}
 <form hx-post="/ui/console/plugins/call" hx-target="#console-plugins-run" hx-swap="innerHTML"
-  class="space-y-2 rounded-xl border border-slate-800 bg-[#0b0b0b] p-3">
+  class="space-y-2 nx-panel p-3">
   <input type="hidden" name="server" value="{{ server }}">
   <input type="hidden" name="tool" value="{{ tool }}">
   <div class="flex items-center justify-between gap-2">
@@ -25,7 +25,7 @@
       <div class="truncate font-mono text-[11px] text-emerald-300">{{ server }}::{{ tool }}</div>
       {% if description %}<div class="truncate text-[10px] text-slate-500">{{ description }}</div>{% endif %}
     </div>
-    <button type="button" hx-get="/ui/console/plugins" hx-target="#console-plugins-body" hx-swap="innerHTML"
+    <button type="button" title="Close the run panel" aria-label="Close the run panel" hx-get="/ui/console/plugins" hx-target="#console-plugins-body" hx-swap="innerHTML"
       class="inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-slate-800 text-slate-500 hover:text-slate-300">
       <i data-lucide="x" class="size-3"></i>
     </button>

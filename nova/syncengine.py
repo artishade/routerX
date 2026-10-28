@@ -1,4 +1,4 @@
-"""Live model catalogue sync — Python port of src/lib/server/model-sync.ts.
+"""Live model catalogue sync — RouterX catalogue sync.
 
 Shared by:
   • POST /api/admin/models/sync            (manual "Sync models" button)
@@ -24,7 +24,7 @@ from .models import Model, Provider
 MAX_MODELS_PER_PROVIDER = 500
 
 # Built-in RouterX Free engine catalogue: the `nova/*` tiers plus every free model
-# from ClawLabsAI/free-ai-models (engine/free-models.json). Resolved per call so
+# in the bundled catalogue (engine/free-models.json). Resolved per call so
 # a refreshed snapshot is picked up without a restart.
 def NOVA_ENGINE_MODELS() -> list[dict]:
     return nova_engine_models()

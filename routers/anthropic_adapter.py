@@ -25,8 +25,11 @@ import json
 import uuid
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from nova import auth as nova_auth
+from nova import session as nova_session
 from sqlalchemy.orm import Session
 from nova.provider_transport import (
     anthropic_headers, anthropic_url, native_anthropic_body, forward_response_headers,
@@ -198,7 +201,7 @@ def openai_tool_calls_to_anthropic(tool_calls) -> list[dict]:
 # --------------------------------------------------------------------------- #
 
 @router.post("/messages/count_tokens")
-async def anthropic_count_tokens(request: Request):
+async def anthropic_count_tokens(request: Request, principal=Depends(nova_auth.gateway_auth)):
     """Claude Code calls /v1/messages/count_tokens?beta=true every turn.
     Without this route the client gets a 404 and agent sessions die."""
     gw = _deps()
@@ -230,9 +233,12 @@ async def anthropic_count_tokens(request: Request):
 # --------------------------------------------------------------------------- #
 
 @router.post("/messages")
-async def anthropic_messages(request: Request):
+async def anthropic_messages(request: Request, principal=Depends(nova_auth.gateway_auth)):
     gw = _deps()
     started = gw.now_ms()
+    session_id = nova_session.session_id_from(request.headers, None)
+    gw.enter_request(session_id=session_id,
+                     client_key_id=getattr(principal, "key_id", None) if principal is not None else None)
     try:
         payload = await request.json()
     except Exception:
@@ -243,6 +249,20 @@ async def anthropic_messages(request: Request):
     requested = str(payload.get("model") or "").strip()
     if not requested:
         return JSONResponse({"type": "error", "error": {"type": "invalid_request_error", "message": "Missing 'model'"}}, status_code=400)
+    refusal = gw.enforce_client(principal, requested)
+    if refusal is not None:
+        # The Anthropic protocol shape on /v1/messages, with the same stable
+        # `error.code` as the OpenAI shape and the RequestLog row every gateway
+        # 4xx writes.
+        await gw.auth_refusal(refusal, requested, "/v1/messages")
+        return JSONResponse({"type": "error", "error": {"type": "api_error", "message": refusal.message,
+                                                         "code": refusal.code}},
+                            status_code=refusal.status, headers=refusal.headers())
+    if not session_id:
+        sid_body = nova_session.session_id_from(request.headers, payload)
+        if sid_body:
+            gw.enter_request(session_id=sid_body,
+                             client_key_id=getattr(principal, "key_id", None) if principal is not None else None)
     raw_messages = payload.get("messages")
     if not isinstance(raw_messages, list) or not raw_messages:
         return JSONResponse({"type": "error", "error": {"type": "invalid_request_error", "message": "Missing 'messages'"}}, status_code=400)
@@ -281,7 +301,9 @@ async def anthropic_messages(request: Request):
     if stream:
         return StreamingResponse(
             _messages_stream(requested, payload, openai_msgs, system_text, max_tokens, temperature, tokens_in, started,
-                             openai_tools, openai_tool_choice, pipeline_body, forward_headers=fw_headers),
+                             openai_tools, openai_tool_choice, pipeline_body, forward_headers=fw_headers,
+                             client_key_id=getattr(principal, "key_id", None) if principal is not None else None,
+                             session_id=session_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", **gw.build_headers()},
         )
@@ -347,6 +369,8 @@ async def anthropic_messages(request: Request):
                      status=200, latency_ms=gw.now_ms() - started, tokens_in=tin,
                      tokens_out=tout, via=result.get("via", "upstream"),
                      spoofed=requested != upstream_model)
+        gw.record_served(db, requested, result, openai_msgs, tin, tout)
+        gw.attribute_client(db, principal, tin, tout)
 
         content_blocks: list[dict] = []
         text_out = gw.strip_think_blocks(result.get("content")) or ""
@@ -440,8 +464,11 @@ async def _try_native_anthropic(db: Session, requested: str, payload: dict, open
             json=body,
         )
         if res.status_code < 200 or res.status_code >= 300:
-            gw.log.info("native anthropic %s returned HTTP %s — using the fallback pipeline",
+            gw.log.info("native anthropic %s returned HTTP %s - using the fallback pipeline",
                         row.provider.key, res.status_code)
+            await asyncio.to_thread(gw.cooldown_after_failure, row.provider.id, key_info.get("keyId"),
+                                    res.status_code, res.headers.get("retry-after"),
+                                    f"HTTP {res.status_code} passthrough")
             return None
         if "text/event-stream" in (res.headers.get("content-type") or "").lower():
             gw.log.warning("native anthropic %s streamed a 2xx to a non-stream request — using the pipeline",
@@ -473,11 +500,14 @@ async def _try_native_anthropic(db: Session, requested: str, payload: dict, open
     ]
     if not content and not tool_blocks:
         return None
+    await asyncio.to_thread(gw.note_key_success, key_info.get("keyId"))
     stop_reason = data.get("stop_reason") or ("tool_use" if tool_blocks else "end_turn")
     return {
         "content": content,
         "tool_blocks": tool_blocks,
         "stop_reason": stop_reason,
+        "upstream_key_id": key_info.get("keyId"),
+        "upstream_exposed_id": row.exposedId,
         "upstream_model": row.modelId,
         "provider_name": row.provider.name,
         "provider_id": row.provider.id,
@@ -496,8 +526,11 @@ async def _try_native_anthropic(db: Session, requested: str, payload: dict, open
 async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict], system_text: str | None,
                            max_tokens: int, temperature, tokens_in: int, started: int,
                            openai_tools=None, openai_tool_choice=None, pipeline_body: dict | None = None,
-                           forward_headers: dict[str, str] | None = None):
+                           forward_headers: dict[str, str] | None = None,
+                           client_key_id: int | None = None, session_id: str = ""):
     gw = _deps()
+    gw.enter_request(session_id=session_id or gw.current_session_id(), client_key_id=client_key_id)
+    ttft_ms = 0
     if pipeline_body is None:
         pipeline_body = dict(payload)
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
@@ -721,6 +754,8 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                                         continue
                                     text = d.get("text", "")
                                     if isinstance(text, str) and text:
+                                        if not ttft_ms:
+                                            ttft_ms = gw.now_ms() - started
                                         filtered = anthro_think.feed(text)
                                         if filtered:
                                             assembled.append(filtered)
@@ -741,6 +776,10 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                         finally:
                             await res.aclose()
                     elif res is not None:
+                        await asyncio.to_thread(gw.cooldown_after_failure, row.provider.id,
+                                                key_info.get("keyId"), res.status_code,
+                                                res.headers.get("retry-after"),
+                                                f"HTTP {res.status_code} passthrough stream")
                         await res.aclose()
         except Exception as err:  # noqa: BLE001
             gw.log.warning("native anthropic stream raised %s: %s", err.__class__.__name__, err)
@@ -756,10 +795,15 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
             for r in rows:
                 stage += 1
                 try:
-                    stream, provider_name, upstream_model = await gw.attempt_upstream_stream(
+                    opened = await gw.attempt_upstream_stream(
                         r, openai_msgs, temperature, pipeline_body,
                         forward_headers=forward_headers)
-                except gw.UpstreamFailure:
+                    stream, provider_name, upstream_model, key_id = (
+                        opened.iterator, opened.provider_name, opened.upstream_model, opened.key_id)
+                except gw.UpstreamFailure as err:
+                    await asyncio.to_thread(gw.cooldown_after_failure,
+                                            err.provider_id or (r.provider.id if r.provider else None),
+                                            err.key_id, err.status, err.retry_after, err.detail)
                     continue
                 except Exception as err:  # noqa: BLE001 — one bad stage must not kill the stream
                     gw.log.warning("anthropic stream stage %s crashed: %s: %s",
@@ -785,7 +829,12 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                     continue
                 committed = True
                 served = {"upstream_model": upstream_model, "provider_name": provider_name,
-                          "via": "upstream", "stage": stage}
+                          "via": "upstream", "stage": stage,
+                          "provider_id": r.provider.id if r.provider is not None else None,
+                          "upstream_exposed_id": r.exposedId, "key_id": key_id}
+                await asyncio.to_thread(gw.note_key_success, key_id)
+                if not ttft_ms:
+                    ttft_ms = gw.now_ms() - started
                 for start_chunk in start_events():
                     yield start_chunk
                 if first.get("tool_calls"):
@@ -867,6 +916,8 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
                             message = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
                             text = message.get("content") or ""
                     if isinstance(text, str) and text:
+                        if not ttft_ms:
+                            ttft_ms = gw.now_ms() - started
                         filtered = anthro_think.feed(text)
                         if filtered:
                             assembled.append(filtered)
@@ -896,11 +947,20 @@ async def _messages_stream(requested: str, payload: dict, openai_msgs: list[dict
             pass
     finally:
         if assembled:
+            tokens_out = gw.estimate_tokens("".join(assembled))
             gw.write_log(db, model=requested, upstream_model=served["upstream_model"],
                          provider_name=served["provider_name"], endpoint="/v1/messages",
                          status=200, latency_ms=gw.now_ms() - started, tokens_in=tokens_in,
-                         tokens_out=gw.estimate_tokens("".join(assembled)), via=served["via"],
-                         spoofed=requested != served["upstream_model"])
+                         tokens_out=tokens_out, via=served["via"],
+                         spoofed=requested != served["upstream_model"], ttft_ms=ttft_ms)
+            try:
+                gw.record_served(db, requested, served, openai_msgs, tokens_in, tokens_out)
+            except Exception:
+                pass
+            try:
+                nova_auth.update_usage(db, client_key_id, tokens_in, tokens_out)
+            except Exception:
+                pass
         db.close()
 
 

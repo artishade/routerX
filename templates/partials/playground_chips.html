@@ -1,0 +1,38 @@
+{# Routing metadata chips from the gateway's _nova block (shared by the server
+   fragment and the streaming renderer in static/app.js — keep the two in sync). #}
+{% macro nova_chips(nova, runtime=None) -%}
+{% if nova %}
+<div class="mt-2.5 flex flex-wrap items-center gap-1.5">
+  {% if nova.provider %}
+  <span class="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+    <i data-lucide="server" class="size-3 text-emerald-300" aria-hidden="true"></i>
+    <span class="sr-only">Provider:</span>{{ nova.provider }}
+  </span>
+  {% endif %}
+  {% if nova.upstream_model %}
+  <span class="inline-flex items-center rounded-md border border-slate-800 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+    <span class="sr-only">Served model:</span>{{ nova.upstream_model }}
+  </span>
+  {% endif %}
+  <span class="inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-[10px] {{ 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' if not nova.stage else 'border-slate-800 bg-slate-900/70 text-slate-400' }}">
+    <span class="sr-only">Stage:</span>stage {{ nova.stage if nova.stage is not none else '-' }}
+  </span>
+  {% if nova.fallback %}
+  <span class="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+    <i data-lucide="git-branch" class="size-3" aria-hidden="true"></i>fallback
+  </span>
+  {% endif %}
+  {% if nova.cached %}
+  <span class="inline-flex items-center rounded-md border border-green-500/30 bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-300">cached</span>
+  {% endif %}
+  {% if nova.spoofed %}
+  <span class="inline-flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[10px] text-purple-300">
+    <i data-lucide="fingerprint" class="size-3" aria-hidden="true"></i>identity spoofed
+  </span>
+  {% endif %}
+  {% if runtime %}
+  <span class="ml-auto font-mono text-[10px] text-slate-500">{{ runtime }}</span>
+  {% endif %}
+</div>
+{% endif %}
+{%- endmacro %}

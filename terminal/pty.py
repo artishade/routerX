@@ -29,17 +29,26 @@ Idle sessions are reaped; everything is torn down on app shutdown.
 """
 from __future__ import annotations
 
-import fcntl
 import os
-import pty
 import re
-import select
 import shlex
-import signal
 import struct
 import threading
 import time
 from urllib.parse import unquote
+
+# The real shells are a POSIX feature: `pty.fork`, a tty ioctl and SIGWINCH
+# have no Windows equivalent. A Windows install must be able to import the
+# app (the sandbox/exec path still works there), so the POSIX-only modules
+# are optional imports and the flag below gates every PTY entry point.
+PTY_SUPPORTED = os.name == "posix"
+if PTY_SUPPORTED:
+    import fcntl
+    import pty
+    import select
+    import signal
+else:  # pragma: no cover - exercised on Windows only
+    fcntl = pty = select = signal = None  # type: ignore[assignment]
 
 from .config import PACKAGE_ROOT, build_root, engine_runtime
 
@@ -107,6 +116,7 @@ class TerminalSession:
 
     def __init__(self, session_id: str, cwd: str = "", cols: int = 120, rows: int = 32,
                  label: str = ""):
+        _require_pty()
         self.id = session_id
         self.created_at = time.time()
         self.last_activity = self.created_at
@@ -332,6 +342,26 @@ class TerminalSession:
             pass
 
 
+class PTYUnavailable(RuntimeError):
+    """The host has no POSIX pseudo-terminal, so real shells cannot start.
+
+    Raised (never silently swallowed) so the terminal hosts can answer with
+    an honest, typed error instead of an empty session or an import crash.
+    """
+    code = "pty_unavailable"
+    status = 503
+
+
+
+def _require_pty() -> None:
+    """Fail with the typed error when this host cannot open a pseudo-terminal."""
+    if not PTY_SUPPORTED:
+        raise PTYUnavailable(
+            "interactive PTY sessions need a POSIX host (Linux/macOS); "
+            f"this host is {os.name!r}. The sandbox command path still works."
+        )
+
+
 class SessionLimitReached(RuntimeError):
     """Raised when a new session is requested while MAX_SESSIONS are live."""
 
@@ -367,6 +397,8 @@ class TerminalManager:
                 session.stop()
 
     def start_reaper(self) -> None:
+        if not PTY_SUPPORTED:
+            return               # no shells can exist, so nothing can go idle
         with self._lock:
             if self._reaper_started:
                 return
@@ -377,6 +409,7 @@ class TerminalManager:
 
     def create(self, cwd: str = "", cols: int = 120, rows: int = 32,
                label: str = "") -> TerminalSession:
+        _require_pty()
         self.start_reaper()
         with self._lock:
             if len(self._sessions) >= self._max:
@@ -493,7 +526,7 @@ def ensure_default() -> None:
         cwd = str(PACKAGE_ROOT)
     try:
         manager.create(cwd=cwd, cols=120, rows=32, label="Root@Build")
-    except (SessionLimitReached, OSError):
+    except (SessionLimitReached, PTYUnavailable, OSError):
         pass
 
 
@@ -549,6 +582,8 @@ def agent_session(label: str | None = None) -> TerminalSession | None:
         try:
             return manager.create(cwd=cwd, cols=120, rows=32,
                                   label=label or AGENT_SESSION_LABEL)
+        except PTYUnavailable:
+            raise                       # honest: this host has no shells at all
         except SessionLimitReached:
             if attempt == 0 and newest is not None:
                 return newest                  # reuse the last agent tab

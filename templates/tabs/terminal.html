@@ -11,8 +11,8 @@
     class="ws-sheet flex w-full shrink-0 flex-col overflow-hidden rounded-xl border border-slate-800 bg-[#070707] xl:w-[380px]">
     <div class="flex shrink-0 items-center justify-between gap-2 border-b border-slate-800 bg-[#0b0b0b]/70 px-3 py-2">
       <div class="flex min-w-0 items-center gap-2.5">
-        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-sky-500/30 bg-sky-500/10">
-          <i data-lucide="sparkles" class="size-4 text-sky-400"></i>
+        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
+          <i data-lucide="sparkles" class="size-4 text-emerald-300"></i>
         </span>
         <div class="min-w-0">
           <h2 class="truncate text-sm font-semibold leading-tight text-slate-100">RouterX Console</h2>
@@ -30,7 +30,7 @@
         <div class="rounded-xl border border-slate-800 bg-[#0b0b0b] px-3 py-2.5 text-[12px] leading-relaxed text-slate-400">
           Ask a question, or start a line with a prefix:
           <div class="mt-1.5 space-y-1 font-mono text-[11px]">
-            <div><span class="text-sky-300">$</span> <span class="text-slate-500">run a shell command</span></div>
+            <div><span class="text-emerald-300">$</span> <span class="text-slate-500">run a shell command</span></div>
             <div><span class="text-purple-300">!</span> <span class="text-slate-500">hand a task to the agent — it runs in its own terminal tab</span></div>
             <div><span class="text-amber-300">/</span> <span class="text-slate-500">shortcut — status, models, keys</span></div>
           </div>
@@ -46,14 +46,14 @@
         </div>
         {% if tools %}
         <div class="rounded-xl border border-slate-800 bg-[#0b0b0b] p-3">
-          <div class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+          <div class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
             <i data-lucide="wrench" class="size-3"></i>
             Permanently registered tools
           </div>
           <div class="flex flex-wrap gap-1.5">
             {% for t in tools %}
             <span class="inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-black/30 px-2 py-1 text-[10px] text-slate-400" title="{{ t.description }}">
-              <i data-lucide="{{ t.icon | default('wrench') }}" class="size-3 text-emerald-400"></i>{{ t.name }}
+              <i data-lucide="{{ t.icon | default('wrench') }}" class="size-3 text-emerald-300"></i>{{ t.name }}
             </span>
             {% endfor %}
           </div>
@@ -64,11 +64,11 @@
         {# chat target pickers: model (grouped by provider) + reasoning effort #}
         <div class="mb-1.5 flex items-center gap-1.5">
           <select id="ws-model" aria-label="Chat model"
-            class="h-7 min-w-0 flex-1 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-sky-500/40 focus:outline-none">
+            class="h-7 min-w-0 flex-1 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-emerald-500/40 focus:outline-none">
             <option value="auto">model: auto — gateway routes</option>
           </select>
           <select id="ws-effort" aria-label="Reasoning effort"
-            class="h-7 w-[104px] shrink-0 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-sky-500/40 focus:outline-none">
+            class="h-7 w-[104px] shrink-0 rounded-md border border-slate-800 bg-[#050505] px-1.5 text-[10px] text-slate-300 focus:border-emerald-500/40 focus:outline-none">
             <option value="">effort: default</option>
             <option value="minimal">minimal</option>
             <option value="low">low</option>
@@ -86,7 +86,7 @@
         <div class="mt-1 flex items-center justify-between gap-2">
           <span id="term-side-mode" class="truncate font-mono text-[10px] text-slate-600">chat</span>
           <button id="term-side-send" type="button" aria-label="Send message"
-            class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-sky-500/90 px-3 text-[11px] font-medium text-white transition-colors hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50">
+            class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-emerald-500/90 px-3 text-[11px] font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
             <i data-lucide="send" class="size-3.5"></i>Send
           </button>
         </div>
@@ -100,7 +100,7 @@
     <header class="ws-hide-mobile flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-slate-800 bg-[#0b0b0b]/70 px-3 py-2">
       <div class="flex min-w-0 items-center gap-2.5">
         <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
-          <i data-lucide="square-terminal" class="size-4 text-emerald-400"></i>
+          <i data-lucide="square-terminal" class="size-4 text-emerald-300"></i>
         </span>
         <div class="min-w-0">
           <h2 class="truncate text-sm font-semibold leading-tight text-slate-100">~ Root@Build</h2>
@@ -127,14 +127,14 @@
           <span class="font-mono text-xs">A+</span>
         </button>
         <button id="term-copy" type="button" title="Copy the visible terminal output" aria-label="Copy terminal output"
-          class="inline-flex size-7 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-emerald-500/40 hover:text-emerald-400">
+          class="inline-flex size-7 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-emerald-500/40 hover:text-emerald-300">
           <i data-lucide="copy" class="size-3.5"></i>
         </button>
         <button id="term-clear" type="button" title="Clear this screen" aria-label="Clear screen"
           class="inline-flex size-7 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-slate-700 hover:text-slate-300">
           <i data-lucide="eraser" class="size-3.5"></i>
         </button>
-        <button id="term-wipe" type="button" title="Delete the saved command history"
+        <button id="term-wipe" type="button" title="Delete the saved command history" aria-label="Delete the saved command history"
           class="inline-flex size-7 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-rose-500/40 hover:text-rose-300"
           hx-post="/ui/terminal/clear" hx-swap="none" hx-confirm="Delete all saved terminal history?">
           <i data-lucide="trash-2" class="size-3.5"></i>
@@ -231,7 +231,7 @@
     <div class="flex shrink-0 items-center justify-between gap-2 border-b border-slate-800 bg-[#0b0b0b]/80 px-3 py-2">
       <div class="flex min-w-0 items-center gap-2">
         <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
-          <i data-lucide="settings-2" class="size-4 text-emerald-400"></i>
+          <i data-lucide="settings-2" class="size-4 text-emerald-300"></i>
         </span>
         <div class="min-w-0">
           <div class="truncate text-sm font-semibold text-slate-100">Cloud build config</div>
@@ -252,15 +252,15 @@
     <div class="grid w-full max-w-sm gap-2">
       <button type="button" data-sheet-open="term"
         class="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-left active:bg-emerald-500/20">
-        <i data-lucide="square-terminal" class="size-5 shrink-0 text-emerald-400"></i>
+        <i data-lucide="square-terminal" class="size-5 shrink-0 text-emerald-300"></i>
         <span class="min-w-0">
           <span class="block text-sm font-medium text-slate-100">Root@Build terminal</span>
           <span class="block truncate font-mono text-[10px] text-slate-500">/app/build · root · permanent cloud shell</span>
         </span>
       </button>
       <button type="button" data-sheet-open="chat"
-        class="flex items-center gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-left active:bg-sky-500/20">
-        <i data-lucide="message-circle" class="size-5 shrink-0 text-sky-400"></i>
+        class="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-left active:bg-emerald-500/20">
+        <i data-lucide="message-circle" class="size-5 shrink-0 text-emerald-300"></i>
         <span class="min-w-0">
           <span class="block text-sm font-medium text-slate-100">RouterX Console</span>
           <span class="block truncate font-mono text-[10px] text-slate-500">chat · $ commands · ! agent tasks</span>

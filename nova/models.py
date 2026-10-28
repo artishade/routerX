@@ -149,6 +149,8 @@ class RequestLog(Base):
     error: Mapped[str] = mapped_column(String, default="")
     via: Mapped[str] = mapped_column(String, default="")
     spoofed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Time to first token (ms) for streaming paths; 0 when not observed.
+    ttftMs: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class TerminalCommand(Base):
@@ -282,8 +284,37 @@ class ProviderSession(Base):
     expiresAt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class UsageWindow(Base):
+    """Per-(provider, model, key) request/token counters for rate limiting.
+
+    Additive telemetry table: one row per open window, `windowKind` being
+    "minute" or "day" and `bucket` the epoch minute / epoch day it covers. The
+    unique tuple makes `nova.ratelimit.record_usage` an idempotent upsert, so
+    concurrent requests cannot double-create a bucket. Old rows are pruned by
+    `nova.ratelimit.prune_usage` (2 days kept). `keyId` is 0 for aggregate
+    counters that are not tied to one upstream key.
+    """
+
+    __tablename__ = "UsageWindow"
+    __table_args__ = (
+        Index("UsageWindow_key_idx", "providerId", "modelId", "keyId", "windowKind", "bucket", unique=True),
+        Index("UsageWindow_ts_idx", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    providerId: Mapped[int] = mapped_column(Integer, default=0)
+    modelId: Mapped[str] = mapped_column(String, default="")
+    keyId: Mapped[int] = mapped_column(Integer, default=0)
+    windowKind: Mapped[str] = mapped_column(String, default="minute")  # minute|day
+    bucket: Mapped[int] = mapped_column(Integer, default=0)
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    tokensIn: Mapped[int] = mapped_column(Integer, default=0)
+    tokensOut: Mapped[int] = mapped_column(Integer, default=0)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 ALL_TABLES = [
     Provider, ProviderKey, Model, ModelRoute, ClientKey, RequestLog,
     TerminalCommand, SystemConfig, StorageProviderRow, StorageFile,
-    AgentTask, AgentStep, ProviderSession, McpServer,
+    AgentTask, AgentStep, ProviderSession, McpServer, UsageWindow,
 ]

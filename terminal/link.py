@@ -28,6 +28,7 @@ import httpx
 
 from . import config          # `terminal/config.py` — this terminal's own settings
 from .pty import (
+    PTYUnavailable,
     SessionLimitReached,
     agent_session,
     ensure_default,
@@ -71,6 +72,23 @@ SessionLimitReached.code = "session_limit"  # type: ignore[attr-defined]
 SessionLimitReached.status = 409           # type: ignore[attr-defined]
 
 
+class PTYUnsupported(TerminalError):
+    """This host has no POSIX pseudo-terminal, so real shells cannot start.
+
+    A typed 503 answer — not a crash and not an empty session — so the
+    dashboard can say the truth while the sandbox command path keeps working.
+    """
+    code = PTYUnavailable.code
+    status = PTYUnavailable.status
+
+
+def _as_link_error(err: Exception) -> Exception:
+    """Translate the PTY manager's own typed error into the link vocabulary."""
+    if isinstance(err, PTYUnavailable):
+        return PTYUnsupported(str(err))
+    return err
+
+
 class SessionStartFailed(TerminalError):
     code = "session_start_failed"
     status = 500
@@ -92,7 +110,8 @@ def error_from_payload(payload: Any, status: int) -> TerminalError:
     """Rebuild the link error a remote service reported."""
     code = payload.get("code") if isinstance(payload, dict) else None
     message = (payload.get("error") if isinstance(payload, dict) else None) or ""
-    for kind in (SessionGone, SessionStartFailed, SessionWriteFailed, LinkUnavailable):
+    for kind in (SessionGone, PTYUnsupported, SessionStartFailed, SessionWriteFailed,
+                 LinkUnavailable):
         if kind.code == code:
             return kind(message or kind.code)
     if code == SessionLimitReached.code:
@@ -118,6 +137,8 @@ class LocalLink:
     # ------------------------------ state ------------------------------ #
 
     async def snapshot(self) -> dict:
+        # No shells can exist without a PTY, so the empty state stays a
+        # normal listing: the tab bar renders and the create call reports why.
         return manager.snapshot()
 
     async def get(self, session: str | None) -> dict | None:
@@ -133,6 +154,8 @@ class LocalLink:
                 return manager.create(cwd=cwd, cols=cols, rows=rows, label=label)
             except SessionLimitReached:
                 raise
+            except PTYUnavailable as err:
+                raise _as_link_error(err) from err
             except OSError as err:
                 raise SessionStartFailed(f"Could not start a shell: {err}") from err
 
@@ -218,7 +241,10 @@ class LocalLink:
                           timeout: int | None = None) -> tuple[str, int] | None:
         """Run one command in the agent's own labelled tab."""
         def _run():
-            sess = agent_session(label)
+            try:
+                sess = agent_session(label)
+            except PTYUnavailable:
+                return None          # no shells on this host; the agent falls back
             if sess is None or sess.closed:
                 return None
             return run_in_session(sess, command, timeout) if timeout \
@@ -229,7 +255,10 @@ class LocalLink:
     # ---------------------------- lifecycle ---------------------------- #
 
     async def ensure_default(self) -> None:
-        await asyncio.to_thread(ensure_default)
+        try:
+            await asyncio.to_thread(ensure_default)
+        except PTYUnavailable:
+            return               # a host without PTY simply has no default shell
 
     async def close_all(self) -> None:
         await asyncio.to_thread(manager.close_all)

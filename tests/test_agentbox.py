@@ -15,6 +15,7 @@ configured with. What matters, and what is easy to get wrong:
 """
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -82,6 +83,15 @@ def _app() -> FastAPI:
     app = FastAPI()
     app.include_router(agentbox.router, prefix="/agent")
     return app
+
+
+# A real shell tab needs a POSIX pseudo-terminal; `tests/test_portability.py`
+# pins the typed 503 a host without one returns.
+_POSIX_ONLY_RUN = unittest.skipUnless(pty_session.PTY_SUPPORTED, "interactive PTY sessions need a POSIX host")
+
+# POSIX permission bits (`0o600`) are only meaningful on a POSIX filesystem:
+# Windows `chmod` toggles the read-only flag only and always reports 0o666.
+_POSIX_ONLY_MODE = unittest.skipUnless(os.name == "posix", "POSIX file modes only")
 
 
 class AgentboxConfigTests(unittest.TestCase):
@@ -235,12 +245,14 @@ class AgentboxProviderTests(unittest.TestCase):
         self.assertEqual(missing.json()["code"], "provider_not_found")
         self.assertIn("groq", missing.json()["error"])
 
+    @_POSIX_ONLY_MODE
     def test_the_registry_file_is_private(self):
         self._add()
         mode = Path(agentbox.registry_path()).stat().st_mode & 0o777
         self.assertEqual(mode, 0o600)
 
 
+@_POSIX_ONLY_RUN
 class AgentboxRunTests(unittest.IsolatedAsyncioTestCase):
     """A tool call must run in a real tab, and the answer must come back."""
 

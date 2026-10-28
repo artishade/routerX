@@ -42,6 +42,11 @@ from terminal.link import (
 )
 
 
+# A real shell tab needs a POSIX pseudo-terminal; `tests/test_portability.py`
+# pins the typed 503 a host without one returns.
+_POSIX_ONLY = unittest.skipUnless(pty_session.PTY_SUPPORTED, "interactive PTY sessions need a POSIX host")
+
+
 def _app() -> FastAPI:
     """A bare app carrying only the shared terminal contract."""
     app = FastAPI()
@@ -69,6 +74,7 @@ class LinkErrorTests(unittest.TestCase):
         self.assertIn("502", str(err))
 
 
+@_POSIX_ONLY
 class LocalLinkTests(unittest.IsolatedAsyncioTestCase):
     """In-process mode — the default, and the one the dashboard used before."""
 
@@ -232,6 +238,7 @@ class RemoteLinkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.seen, [])
 
 
+@_POSIX_ONLY
 class SameRoutesBothHostsTests(unittest.TestCase):
     """The proof that the split didn't fork the API: the gateway's
     /api/admin/terminal/pty/* and the service's /terminal/pty/* are the same

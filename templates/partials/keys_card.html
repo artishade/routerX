@@ -1,6 +1,6 @@
 {# Client key card — KeysTab.tsx card layout (badge row, token row, usage row, budget bar). #}
 {% set pct = ([100, ((k.tokens_out / k.tpd_limit * 100) | round(0, 'common') | int)] | min) if k.tpd_limit and k.tpd_limit > 0 else 0 %}
-<div class="keys-card rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4" data-key-id="{{ k.id }}">
+<div class="keys-card nx-panel p-4" data-key-id="{{ k.id }}">
   <div class="flex flex-wrap items-center gap-2">
     <i data-lucide="key-round" class="size-4 text-emerald-400"></i>
     <span class="text-sm font-semibold text-slate-100">{{ k.name }}</span>

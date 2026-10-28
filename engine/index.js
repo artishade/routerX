@@ -1,8 +1,8 @@
 /**
  * RouterX Free engine sidecar — the built-in free-model gateway.
  *
- * This is the localhost HTTP bridge between the Python gateway and the free AI
- * model set tracked by ClawLabsAI/free-ai-models (see engine/free-models.json).
+ * This is the localhost HTTP bridge between the Python gateway and the bundled
+ * free-model catalogue in engine/free-models.json.
  * It needs NO configuration and NO API key: keyless providers (Pollinations,
  * OVHcloud) are used by default, and OpenRouter/ZeroLimitAI are used
  * automatically as soon as their key is present in the environment.
@@ -33,7 +33,7 @@ function loadCatalogue() {
   const data = JSON.parse(raw);
   return {
     updatedAt: data.updated_at || null,
-    sourceRepo: data.source_repo || 'https://github.com/ClawLabsAI/free-ai-models',
+    sourceRepo: data.source || 'RouterX free-model catalogue',
     providers: data.providers || {},
     models: Array.isArray(data.models) ? data.models : [],
   };
@@ -231,7 +231,7 @@ async function handleModels() {
     max_output: m.max_output ?? null,
     modalities: m.modalities || ['text'],
     rate_limit: m.rate_limit || null,
-    zo_score: m.zo_score ?? null,
+    quality: m.quality ?? m.zo_score ?? null,
     health: m.health ?? null,
     is_free: true,
     route: m.route,
@@ -619,7 +619,7 @@ async function route(req) {
 
 if (typeof Bun !== 'undefined') {
   Bun.serve({ port: PORT, hostname: HOST, fetch: route });
-  console.log(`[engine] novafree sidecar (free-ai-models) listening on http://${HOST}:${PORT}`);
+  console.log(`[engine] novafree sidecar (RouterX Free) listening on http://${HOST}:${PORT}`);
 } else {
   const { createServer } = await import('node:http');
   const server = createServer(async (req, res) => {
@@ -648,6 +648,6 @@ if (typeof Bun !== 'undefined') {
     }
   });
   server.listen(PORT, HOST, () => {
-    console.log(`[engine] novafree sidecar (free-ai-models) listening on http://${HOST}:${PORT}`);
+    console.log(`[engine] novafree sidecar (RouterX Free) listening on http://${HOST}:${PORT}`);
   });
 }

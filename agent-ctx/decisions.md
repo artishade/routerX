@@ -3,6 +3,118 @@
 Intent-preservation memory. If a change would contradict an entry here, check
 with the user before overriding, or add a new dated entry explaining the pivot.
 
+## 2026-10-28 — The catalogue is curated, and every base_url is an API root
+- **A big registry was a liability, not a feature.** The previous catalogue was
+  a ~30k-line generated dump: a few hundred providers and thousands of models,
+  most of them dead proxies, retired replicas or endpoints that never answered.
+  Every dead entry is a request that burns a fallback stage before a real
+  provider gets a chance, and a list where most rows fail cannot honestly be
+  called a "free tier". It is now a small, hand-maintained list
+  (`nova/data/provider_registry.json`, 19 providers / 86 models) where every
+  entry is one that actually responds. Fewer rows, all of which work, is the
+  only catalogue worth shipping.
+- **`base_url` is always the API root.** The generator stored some values as
+  full endpoints (`…/chat/completions`, `…/models`). The gateway appends the
+  path itself, so such a provider requested `…/chat/completions/chat/completions`
+  and could never answer — silently, because discovery still looked fine.
+  `nova/registry.py` `validate()` now rejects an endpoint-shaped `base_url`,
+  and every consumer (gateway, discovery, probes) relies on appending.
+- **One flag for keyless.** `requires_key: false` *is* the keyless marker;
+  there is deliberately no separate `keyless` field. A keyless provider must
+  also declare `auth_type: none`, which `validate()` enforces — no credential
+  can be "required" and "not required" at the same time.
+- **The catalogue is validated as data, not trusted as code.** `summary()`
+  feeds the dashboard counts, `is_keyless()` the free surface, and
+  `registry_models_for_engine()` the sidecar's model list, so the two numbers a
+  user sees can never disagree. Regenerating the registry is a deliberate,
+  reviewed data step.
+
+## 2026-10-28 — Gateway auth: fail-closed once a client key exists, fail-open on a fresh install
+- **A fresh install must not demand a credential it never printed.** Someone
+  who runs `docker compose up` and calls `/v1/chat/completions` has no client
+  key to authenticate with; refusing them would make the first-run experience
+  a 401 with no way forward. So with zero enabled `ClientKey` rows the gateway
+  stays anonymous-friendly.
+- **The first enabled key flips the rule, immediately.** A client key exists
+  to be enforced; if a deployment can mint a key and still accept anonymous
+  calls, revocation is a fiction. The moment one enabled key exists, a request
+  with no credential is `401 missing_api_key`. `NOVA_REQUIRE_API_KEY` forces the
+  same for deployments that want keys from day one.
+- **Unknown and disabled tokens are always refused.** Treating a revoked token
+  as "anonymous" would let a revoked key keep working on a fail-open
+  deployment — the exact inverse of revocation. It is `401 invalid_api_key`, and
+  repeated failures are throttled in memory.
+- **Usage is written in exactly one place.** `nova/auth.py` `attribute()` /
+  `update_usage()` is the single writer of `ClientKey` counters (`reqCount`,
+  `lastUsedAt`, tokens), so no endpoint has to remember to book usage. The
+  model allow-list, the sliding-minute RPM and the daily token budget are
+  checked once the requested model is known.
+
+## 2026-10-28 — Upstream rate limits default to unlimited
+- **Silently throttling a working deployment is worse than a provider 429.**
+  A gateway's job is to move a request to a provider that can serve it. If
+  RouterX invented per-minute or per-day caps on first upgrade, a working
+  deployment would start refusing traffic it used to serve, and the cause would
+  be our default, not the operator's configuration.
+- **So every limit is opt-in, and `0` means no limit.** `NOVA_DEFAULT_RPM/TPM/
+  RPD/TPD` default to `0`, the `rate_limits` SystemConfig knob starts empty, and
+  `capped()` short-circuits to an empty set when nothing is configured — the
+  candidate pool is exactly what it was before the module existed. A knob that
+  sets only `rpm` caps the minute and does not invent a token budget.
+- **What the module *is* for:** when an operator does set a cap, a request that
+  is already out of budget is dropped *before* ordering, so the next candidate
+  serves it instead of a round trip being wasted on a guaranteed 429. Key
+  cooldowns are separate and always on: a key that got a 429/401/5xx sleeps,
+  honouring the provider's `Retry-After`.
+
+## 2026-10-28 — The response cache is opt-in and never touches tool calls or streams
+- **A cache changes behaviour, so it cannot be a default.** Storing and
+  replaying completions is a semantic change (a "fresh" call returns an older
+  answer); on an upgrade it must be invisible. `NOVA_RESPONSE_CACHE` starts off
+  and the `response_cache` knob starts empty.
+- **Only a plain 200 text completion is worth storing.** Streaming has no body
+  to key on and tool calls are the agent loop's control flow — replaying a
+  cached tool call would make the loop act twice on a stale decision. So
+  `cacheable()` rejects both, and `x-nova-no-cache: 1` bypasses read and write
+  for callers that must never get a cached answer.
+- **The key is the request, not the moment.** Temperature, `max_tokens`, `top_p`
+  and the tools are part of the address; user ids and headers are not, because
+  they do not change the text a provider generates. Anything that is not in the
+  key is deliberately considered "same answer".
+
+## 2026-10-28 — `auto:<profile>` resolves before routing; an unknown profile is a 404
+- **A profile is a routing instruction, not a model.** `auto:fast` must change
+  *how* the request is routed (a fallback list and an optional strategy), never
+  what the response claims to be: the response `model` stays `auto:fast`, and
+  the profile is applied as a plan override before the candidate pool is
+  ordered.
+- **An unknown profile is an error, not an opportunity to guess.** Falling
+  back to plain `auto` would silently bill or route against a different chain
+  than the caller named — a "cheap" client would quietly get an expensive
+  model and never know. It is a 404 that says the profile does not exist.
+- **Profiles are plain config.** They live in the `routing_profiles`
+  SystemConfig key and are validated by `nova/profiles.py` `normalize_spec()`,
+  so an unknown strategy is dropped at write time rather than turning a request
+  into a runtime surprise.
+
+## 2026-10-28 — A trade stage is terminal: trading breaks the fallback invariant on purpose
+- **The fallback chain assumes a call is safe to repeat.** Text generation is:
+  a second provider returning the same content costs nothing but a retry.
+  Placing an order is not. If the first exchange's response is lost on the way
+  back, the order may still have filled — re-sending it to a second provider
+  can double the position. Money is not idempotent by default.
+- **Therefore the trading roadmap opts out explicitly.** (Phase 3 onward — not
+  implemented yet.) A trading request is resolved by a terminal stage: a
+  failure is a typed decision (`insufficient_funds`, `market_closed`,
+  `risk_rejected`, …), and the router must never dispatch it to the next
+  candidate. This is the one place where "the client keeps asking for one model
+  id and still gets an answer" is the wrong outcome — the honest answer is
+  "we do not know whether it filled".
+- **Idempotency keys and a kill-switch are preconditions, not features.** Any
+  retry inside a trading flow has to be idempotent at the exchange, and the
+  Phase 0 kill-switch must be able to refuse every trade tool before any live
+  execution code ships.
+
 ## Platform pivots
 
 - **2026-09 · Python port (current).** The whole app is FastAPI + Jinja2 + HTMX.
@@ -120,21 +232,21 @@ with the user before overriding, or add a new dated entry explaining the pivot.
   provider that does not exist is a 404 that lists the ones that do — never a
   silent fall back to the default, which would quietly bill the wrong account.
 
-## 2026-10-02 — The routing brain is ported from OmniRoute
-- **The upstream model is OmniRoute's domain layer, not its code.** RouterX
-  stays Python; `nova/routing.py` re-implements `tagRouter`, `policyEngine`,
+## 2026-10-02 — The routing brain is RouterX's own, as pure functions
+- **The routing model is a decision layer, not a codebase.** RouterX stays
+  Python; `nova/routing.py` implements `tagRouter`, `policyEngine`,
   `accountFallback`/`lockoutPolicy`, `fallbackPolicy`, the combo strategies and
   `routerStrategy` as pure functions over plain dicts, and `nova/catalog.py`
-  reads a generated JSON snapshot of the OmniRoute provider registry. Reason:
-  a Next.js tree-shaking/executor model does not port — but its *decisions* do,
-  and the decisions are the valuable part.
+  reads the curated `nova/data/provider_registry.json`. Reason: an executor-model
+  codebase does not port — but the *decisions* do, and the decisions are the
+  valuable part.
 - **Decisions live in `nova/`, never in `routers/gateway.py`.** The gateway only
   supplies rows and records outcomes. Everything a routing change touches is a
   pure function with a unit test in `tests/test_routing.py`.
 - **The catalogue is data, not code.** `nova/data/provider_registry.json` is a
-  generated snapshot (223 providers / 2325 active models) with the retired and
-  retiring models already dropped, per OmniRoute's vendor deprecation snapshot.
-  Regenerating it is a data step, not a code change.
+  curated, hand-maintained document; dead and retired entries are simply not in
+  it. Changing it is a reviewed data step, not a code change. *(Superseded
+  2026-10-28: it is now a small curated list, not a generated snapshot.)*
 - **Seeding is additive and providers start disabled.** `bootstrap` inserts only
   rows that are missing and never touches an existing one, so a provider the
   operator already configured keeps its own base URL, prefix and priority, and a
@@ -144,15 +256,16 @@ with the user before overriding, or add a new dated entry explaining the pivot.
   or `SystemConfig seed_registry_models=off` skips it entirely.
 - **One predicate, two chokepoints.** The exposure allow/deny list gates
   `/v1/models` *and* candidate selection, so a hidden model can never re-enter
-  through a fallback chain — the exact mistake OmniRoute's `MODEL_EXPOSURE_LIST.md`
-  documents.
+  through a fallback chain. That is exactly why the exposure list is one shared
+  predicate rather than two filters.
 - **Scopes are opt-in.** `has_scopes()` treats "no scopes declared" as permitted,
   because the console and the agent run in-process with no scope table and
   locking them out would be a regression. A credential that *does* declare scopes
   gets them enforced.
-- **The tab lists are paged.** 200+ providers and 2300+ models are the intended
-  state, so the Providers and Models tabs render a bounded first page and say
-  "N of M"; search narrows to the rest.
+- **The tab lists are paged.** The Providers and Models tabs render a bounded
+  first page and say "N of M"; search narrows to the rest, so the UI stays fast
+  however large the catalogue grows. *(The catalogue itself is now curated —
+  see the 2026-10-28 entry.)*
 
 ## 2026-10-01 — Custom MCP servers are the console's plugin system
 - **One table (`McpServer`), two transports.** A plugin is either a streamable

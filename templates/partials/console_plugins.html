@@ -53,19 +53,19 @@
           <i data-lucide="plug" class="size-3"></i>Test
         </button>
         <button type="button" hx-get="/ui/console/plugins/form?server={{ s.id }}" hx-target="#console-plugins-body" hx-swap="innerHTML"
-          title="Edit this server"
+          title="Edit this server" aria-label="Edit the {{ s.name }} server"
           class="inline-flex size-6 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-emerald-500/40 hover:text-emerald-300">
           <i data-lucide="pencil" class="size-3"></i>
         </button>
         <button type="button" hx-post="/ui/console/plugins/toggle" hx-vals='{"id":"{{ s.id }}","enabled":{{ "false" if s.enabled else "true" }}}'
           hx-target="#console-plugins-body" hx-swap="innerHTML"
-          title="{{ 'Disable' if s.enabled else 'Enable' }} this server"
+          title="{{ 'Disable' if s.enabled else 'Enable' }} this server" aria-label="{{ 'Disable' if s.enabled else 'Enable' }} the {{ s.name }} server"
           class="inline-flex size-6 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-amber-500/40 hover:text-amber-300">
           <i data-lucide="{{ 'power' if s.enabled else 'power-off' }}" class="size-3"></i>
         </button>
         <button type="button" hx-post="/ui/console/plugins/delete" hx-vals='{"id":"{{ s.id }}"}' hx-target="#console-plugins-body" hx-swap="innerHTML"
           hx-confirm="Remove the {{ s.name }} MCP server? Tools from it stop being available to the agent."
-          title="Remove this server"
+          title="Remove this server" aria-label="Remove the {{ s.name }} server"
           class="inline-flex size-6 items-center justify-center rounded-md border border-slate-800 text-slate-500 transition-colors hover:border-rose-500/40 hover:text-rose-300">
           <i data-lucide="trash-2" class="size-3"></i>
         </button>
@@ -125,7 +125,7 @@
       <div class="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
         {{ 'Edit plugin' if form.id else 'Add a plugin' }}
       </div>
-      <button type="button" hx-get="/ui/console/plugins" hx-target="#console-plugins-body" hx-swap="innerHTML"
+      <button type="button" title="Clear the tool form" aria-label="Clear the tool form" hx-get="/ui/console/plugins" hx-target="#console-plugins-body" hx-swap="innerHTML"
         class="inline-flex size-6 items-center justify-center rounded-md border border-slate-800 text-slate-500 hover:text-slate-300">
         <i data-lucide="x" class="size-3"></i>
       </button>

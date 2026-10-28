@@ -1,0 +1,26 @@
+{# Playground answer — rendered by POST /ui/playground/send (HTMX) and, for the
+   streamed path, built element-for-element by initPlayground() in app.js. #}
+{% from "partials/playground_chips.html" import nova_chips with context %}
+{% if user %}
+<div class="ml-auto max-w-[85%] rounded-2xl rounded-tr-md border border-emerald-500/25 bg-emerald-500/10 px-3.5 py-2.5 text-sm text-slate-100">
+  <p class="whitespace-pre-wrap break-words">{{ user }}</p>
+</div>
+{% endif %}
+{% if error %}
+<div class="max-w-[92%] rounded-2xl rounded-tl-md border border-rose-500/40 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-200" role="alert">
+  <div class="flex items-center gap-2 font-medium">
+    <i data-lucide="triangle-alert" class="size-3.5 shrink-0" aria-hidden="true"></i>
+    {% if status %}Gateway returned HTTP {{ status }}{% else %}Request failed{% endif %}
+  </div>
+  <p class="mt-1 break-words font-mono text-xs text-rose-200/90">{{ error }}</p>
+</div>
+{% elif result %}
+<div class="max-w-[92%] rounded-2xl rounded-tl-md border border-slate-800 bg-[#0b0b0b] px-3.5 py-2.5 text-sm text-slate-200">
+  <div class="mb-1 flex items-center gap-1.5 nx-kicker">
+    <i data-lucide="sparkles" class="size-3 text-emerald-300" aria-hidden="true"></i>
+    <span>{{ result.model }}</span>
+  </div>
+  <div class="md-body whitespace-pre-wrap break-words">{{ result.content or '(empty answer)' }}</div>
+  {{ nova_chips(result.nova, ('%.0f ms · %s in / %s out · %s' % (result.latency_ms, result.tokens_in if result.tokens_in is not none else '—', result.tokens_out if result.tokens_out is not none else '—', result.finish_reason))) }}
+</div>
+{% endif %}

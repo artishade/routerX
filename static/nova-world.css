@@ -1,0 +1,336 @@
+/* RouterX — "Dark AI World" visual system.
+ *
+ * Loaded AFTER nova.css. nova.css keeps the behaviour (sidebar, terminal,
+ * xterm, mobile sheets, toasts); this file owns the *look*: the layered
+ * background, panels, typography accents and motion.
+ *
+ * Palette (single source of truth is templates/base.html; these are mirrors):
+ *   surface  #050505 page · #0b0b0b panel · #111111 raised
+ *   accent   RouterX darkest-red ramp  (emerald-* utilities in Tailwind)
+ *   success  green  · warning amber · error rose · RAM/spoof purple
+ *
+ * Every rule degrades gracefully: where a custom property is unsupported the
+ * literal fallback in var() is used, so nothing becomes invisible. All motion
+ * is disabled by the prefers-reduced-motion block at the bottom.
+ * z-index contract for the background: position:fixed, z-index:-1, and
+ * #shell / body paint above it (see the isolation rules just below).
+ */
+
+/* ---------------------------------------------------------------- tokens */
+:root {
+  --nx-bg: #050505;
+  --nx-panel: #0b0b0b;
+  --nx-raised: #111111;
+  --nx-line: #262626;
+  --nx-line-soft: #1a1a1a;
+  --nx-ink: #e5e5e5;
+  --nx-ink-dim: #a3a3a3;
+  --nx-ink-faint: #737373;
+  --nx-red-300: #e8564a;
+  --nx-red-350: #e05a4e;
+  --nx-red-400: #da4f43;
+  --nx-red-500: #a8281b;
+  --nx-red-600: #7f1d14;
+  --nx-red-900: #2a0906;
+  --nx-green: #4ade80;
+  --nx-radius: 0.875rem;
+  --nx-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* The app shell paints above the fixed backdrop. isolation keeps the -1
+ * layer inside the page stacking context instead of sliding under <body>. */
+html { background: #050505; }
+body { background: transparent; isolation: isolate; }
+#shell { position: relative; z-index: 0; }
+
+/* ------------------------------------------------------- background world */
+.nx-world {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #140605 0%, transparent 60%),
+    #050505;
+}
+.nx-world > .nx-aurora {
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(38vw 30vw at 18% 22%, rgba(168, 40, 27, 0.20), transparent 62%),
+    radial-gradient(34vw 28vw at 82% 30%, rgba(94, 20, 14, 0.22), transparent 60%),
+    radial-gradient(40vw 34vw at 55% 88%, rgba(58, 12, 8, 0.26), transparent 64%);
+  filter: blur(60px) saturate(120%);
+  animation: nx-aurora-drift 54s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.nx-world > .nx-mesh {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 25%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 25%, transparent 78%);
+  opacity: 0.75;
+}
+.nx-world > .nx-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 38vh;
+  background: linear-gradient(to bottom, transparent, rgba(232, 86, 74, 0.045), transparent);
+  animation: nx-scan 22s linear infinite;
+  will-change: transform;
+}
+.nx-world > .nx-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 40%, transparent 42%, rgba(0, 0, 0, 0.72) 100%);
+}
+
+@keyframes nx-aurora-drift {
+  0%   { transform: translate3d(-2%, -1%, 0) scale(1); }
+  50%  { transform: translate3d(2%, 2%, 0) scale(1.06); }
+  100% { transform: translate3d(-1%, 3%, 0) scale(1.02); }
+}
+@keyframes nx-scan {
+  from { transform: translateY(-40vh); }
+  to   { transform: translateY(105vh); }
+}
+
+/* Optional film-grain overlay (inline SVG noise, no extra request). */
+.nx-grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* ---------------------------------------------------------------- panels */
+.nx-panel,
+.nx-card {
+  position: relative;
+  border: 1px solid #262626;
+  border-color: var(--nx-line);
+  background: rgba(11, 11, 11, 0.8);
+  border-radius: 0.875rem;
+  border-radius: var(--nx-radius);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+    inset 0 -14px 30px -24px rgba(0, 0, 0, 0.9);
+  transition: border-color 0.25s cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 0.25s cubic-bezier(0.22, 0.61, 0.36, 1),
+              transform 0.25s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+/* Top highlight line — the thing that makes a panel read as "engineered". */
+.nx-panel::before,
+.nx-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12) 30%, rgba(232, 86, 74, 0.35) 50%, rgba(255, 255, 255, 0.12) 70%, transparent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.nx-card { background: rgba(17, 17, 17, 0.72); }
+
+.nx-panel-hover:hover,
+.nx-panel-hover:focus-within,
+.nx-panel:hover:not(.nx-static),
+.nx-card:hover:not(.nx-static) {
+  border-color: rgba(168, 40, 27, 0.55);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(168, 40, 27, 0.18),
+    0 12px 40px -12px rgba(168, 40, 27, 0.35);
+}
+.nx-static:hover,
+.nx-static:focus-within {
+  border-color: #262626;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Soft red halo — for hero elements only, used sparingly. */
+.nx-glow-red { box-shadow: 0 0 0 1px rgba(168, 40, 27, 0.35), 0 18px 60px -24px rgba(168, 40, 27, 0.65); }
+
+/* ------------------------------------------------------------ typography */
+.nx-kicker {
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #737373;
+  color: var(--nx-ink-faint);
+}
+.nx-display {
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  background: linear-gradient(92deg, #e8564a 0%, #f2b8b1 45%, #f5f5f5 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Fallback: no background-clip support → plain readable ink, never invisible. */
+@supports not ((-webkit-background-clip: text) or (background-clip: text)) {
+  .nx-display { color: #f5f5f5; background: none; }
+}
+.nx-underline {
+  position: relative;
+}
+.nx-underline::after {
+  content: "";
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.35rem;
+  height: 1px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, #e8564a, transparent);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.nx-underline:hover::after,
+.nx-underline:focus-visible::after,
+.nx-underline.is-active::after { transform: scaleX(1); }
+
+/* ---------------------------------------------------------------- motion */
+.nx-reveal {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0);
+  animation: nx-reveal-in 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+/* `responded` is set by initWorldFX once the observer has seen the element. */
+.nx-reveal.responded { opacity: 1; transform: none; animation: none; }
+@keyframes nx-reveal-in {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+.nx-shine { position: relative; overflow: hidden; }
+.nx-shine > * { position: relative; z-index: 1; }
+.nx-shine::after {
+  content: "";
+  position: absolute;
+  top: -60%;
+  bottom: -60%;
+  left: -30%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+  transform: translateX(-120%) rotate(8deg);
+  transition: transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
+}
+.nx-shine:hover::after,
+.nx-shine:focus-within::after { transform: translateX(320%) rotate(8deg); }
+
+.nx-pulse-dot { position: relative; display: inline-flex; width: 0.5rem; height: 0.5rem; }
+.nx-pulse-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: #4ade80;
+  background: var(--nx-green);
+  opacity: 0.55;
+  animation: nx-pulse 2.4s ease-out infinite;
+}
+.nx-pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: #4ade80;
+  background: var(--nx-green);
+}
+.nx-pulse-dot.is-warn::before, .nx-pulse-dot.is-warn::after { background: #fbbf24; }
+.nx-pulse-dot.is-idle::before { animation: none; opacity: 0; }
+.nx-pulse-dot.is-idle::after { background: #525252; }
+@keyframes nx-pulse {
+  0%   { transform: scale(1); opacity: 0.5; }
+  70%  { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* Buttons: lift + press. Applies to every button that is not pure chrome. */
+button:not(.nx-flat):not([disabled]):not(.nx-panel):not(.nx-card) {
+  transition: transform 0.16s cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 0.16s cubic-bezier(0.22, 0.61, 0.36, 1),
+              background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+button:not(.nx-flat):not([disabled]):not(.nx-panel):not(.nx-card):not(.ws-fab):not(.term-tab-close):hover { transform: translateY(-1px); }
+button:not(.nx-flat):not([disabled]):not(.nx-panel):not(.nx-card):active { transform: translateY(0) scale(0.985); }
+
+/* 3D tilt — applied by initWorldFX on `.nx-tilt` (stat cards, sparingly). */
+.nx-tilt {
+  transform-style: preserve-3d;
+  transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) translateZ(0);
+  transition: transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease;
+  will-change: transform;
+}
+.nx-tilt:hover { border-color: rgba(168, 40, 27, 0.5); }
+
+/* Cursor-follow glow — `.nx-glow` gets --mx/--my from initWorldFX. */
+.nx-glow { position: relative; }
+.nx-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%), rgba(168, 40, 27, 0.16), transparent 60%);
+}
+.nx-glow:hover::after { opacity: 1; }
+
+/* Nav: active item gets the red bar + red tint (nova.css carries the base). */
+.nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(168, 40, 27, 0.16), transparent 70%);
+  pointer-events: none;
+}
+.nav-item .nav-active-bar { box-shadow: 0 0 12px rgba(232, 86, 74, 0.65); }
+
+/* ------------------------------------------------------------- a11y */
+:where(a, button, [role="button"], input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #e8564a;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* Utility classes that opted out of the browser outline now get ours. */
+.focus\:outline-none:focus-visible { outline: 2px solid #e8564a; outline-offset: 2px; }
+
+/* ------------------------------------------------- prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .nx-world > .nx-aurora,
+  .nx-world > .nx-scan,
+  .nx-reveal,
+  .nx-pulse-dot::before,
+  .nx-shine::after,
+  .nx-tilt,
+  .nx-glow::after,
+  button,
+  .heap-bar,
+  .term-pulse,
+  .nova-caret,
+  #tab-content > * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .nx-reveal { opacity: 1; transform: none; }
+  .nx-tilt { transform: none !important; }
+  .nx-world > .nx-scan { display: none; }
+}

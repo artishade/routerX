@@ -68,8 +68,10 @@ then `sh scripts/test.sh`.
    502 from the engine, RequestLog on every branch (including errors).
 3. Route-resolution helpers + `/api/admin/routes/preview` (Stage 1/2/3 timeline)
    live in `routers/admin_routes.py` — keep preview consistent with the pipeline.
-4. Cooldowns/weights/key selection come from ProviderKey state + `nova/kv.py`
-   config (cooldowns {429:60, 402:300, 5xx:30} by default).
+4. Cooldowns/weights/key selection come from ProviderKey state +
+   `nova/ratelimit.py` (`cooldown_seconds` honours `Retry-After`; defaults
+   `NOVA_KEY_COOLDOWN_429`=60, `_5XX`=30, `_401`=300, `_MAX`=900). Per-(provider,
+   model) usage caps are the `rate_limits` knob - `0` means unlimited.
 5. Anthropic-format side: `routers/anthropic_adapter.py` + translators in
    `nova/provider_transport.py` (`openai_to_anthropic` / `anthropic_to_openai`).
 
@@ -98,8 +100,10 @@ then `sh scripts/test.sh`.
 ## 9. Engine sidecar changes (free models)
 
 1. Sidecar code: `engine/index.js` (zero npm deps — plain fetch/routing only).
-2. Catalogue: `engine/free-models.json` (snapshot of ClawLabsAI/free-ai-models).
-   Refresh via `POST /api/admin/models/sync` or regenerate from upstream repo.
+2. Catalogue: `engine/free-models.json` (RouterX's own free-model list).
+   Refresh via `POST /api/admin/models/sync`; the keyless providers in
+   `nova/data/provider_registry.json` feed it through `nova/registry.py`
+   `registry_models_for_engine()`.
 3. Tier aliases (`routerx/pro`, `routerx/air`, `routerx/mini`) resolve in `nova/freemodels.py`.
 4. Sidecar lifecycle/port: `nova/engine.py` + `NOVA_ENGINE_PORT` in `nova/config.py`
    (never the app's port). If the sidecar can't run, the gateway degrades to

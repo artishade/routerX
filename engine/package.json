@@ -3,6 +3,6 @@
   "private": true,
   "version": "2.0.0",
   "type": "module",
-  "description": "RouterX Free engine sidecar — keyless free-ai-models router (no npm dependencies).",
+  "description": "RouterX Free engine sidecar — keyless free-model router (no npm dependencies).",
   "dependencies": {}
 }

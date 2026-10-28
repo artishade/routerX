@@ -1,669 +1,388 @@
 {
- "source": "https://github.com/diegosouzapw/OmniRoute",
+ "source": "RouterX",
  "skills": [
   {
-   "id": "omni-auth",
-   "name": "Authentication",
-   "description": "Manage API key authentication and session tokens. Start here to authenticate requests via Bearer token, obtain session cookies, and configure login requirements for the OmniRoute API.",
+   "id": "gateway-chat",
+   "name": "Gateway: Chat Completions",
+   "description": "POST /v1/chat/completions (also /api/v1/chat/completions): OpenAI-shaped chat with SSE streaming and a full fallback pipeline. Accepts a real model id, auto, or auto:<profile>; the response model is always the requested id and the truth lives in _nova.",
    "category": "api",
-   "area": "auth",
-   "icon": "lock",
+   "area": "gateway",
+   "icon": "hub",
    "is_entry": true,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-auth/SKILL.md"
+   "url": "agent-ctx/skills/gateway-chat.md"
   },
   {
-   "id": "omni-providers",
-   "name": "Providers",
-   "description": "Manage provider connections, API keys, OAuth flows, and connection tests via the REST API. List, add, update, remove, and test AI provider integrations across OmniRoute's 327-provider catalog.",
+   "id": "gateway-messages",
+   "name": "Gateway: Anthropic Messages",
+   "description": "POST /v1/messages and POST /v1/messages/count_tokens in the Anthropic wire format, behind the same client-key auth. OpenAI providers are translated through nova/provider_transport.py; native passthrough is used when the upstream already speaks Anthropic.",
+   "category": "api",
+   "area": "gateway",
+   "icon": "chat",
+   "is_entry": false,
+   "is_new": false,
+   "url": "agent-ctx/skills/gateway-messages.md"
+  },
+  {
+   "id": "gateway-responses",
+   "name": "Gateway: Responses API",
+   "description": "POST /v1/responses translates the OpenAI Responses shape (input, instructions) onto the existing chat pipeline and streams response.created, then response.output_text.delta, to response.completed, or ends with response.failed.",
+   "category": "api",
+   "area": "gateway",
+   "icon": "device_hub",
+   "is_entry": false,
+   "is_new": false,
+   "url": "agent-ctx/skills/gateway-responses.md"
+  },
+  {
+   "id": "gateway-completions-embeddings",
+   "name": "Gateway: Completions, Embeddings, Models",
+   "description": "POST /v1/completions (legacy text completion), POST /v1/embeddings (non-streaming vector output), and GET /v1/models, which lists every enabled model plus the auto, auto:<profile> and routerx/pro, routerx/air, routerx/mini virtual ids; ?discover=1 adds live upstream discovery.",
+   "category": "api",
+   "area": "gateway",
+   "icon": "neurology",
+   "is_entry": false,
+   "is_new": false,
+   "url": "agent-ctx/skills/gateway-completions-embeddings.md"
+  },
+  {
+   "id": "client-keys",
+   "name": "Client Keys",
+   "description": "Gateway credentials (nova-sk-...) managed from the Keys tab or /api/admin/client-keys. Each key can restrict allowed model globs, a sliding-minute RPM and a daily token budget; auth is fail-open on a fresh install and fail-closed once any enabled key exists (NOVA_REQUIRE_API_KEY forces keys).",
+   "category": "api",
+   "area": "keys",
+   "icon": "vpn_key",
+   "is_entry": true,
+   "is_new": false,
+   "url": "agent-ctx/skills/client-keys.md"
+  },
+  {
+   "id": "rate-limits",
+   "name": "Rate Limits and Usage Caps",
+   "description": "Per provider, model and key usage booking through nova/ratelimit.py, with the rate_limits knob at GET and POST /api/admin/rate-limits (0 = unlimited, the default). GET /api/admin/usage reports how much of each window is spent and which (provider, model) pairs are exhausted.",
+   "category": "api",
+   "area": "limits",
+   "icon": "savings",
+   "is_entry": false,
+   "is_new": false,
+   "url": "agent-ctx/skills/rate-limits.md"
+  },
+  {
+   "id": "providers-keys",
+   "name": "Providers and Upstream Keys",
+   "description": "Add, edit, test, sign in and delete provider connections from the Providers tab (/api/admin/providers). Each provider holds one or more upstream keys; keys rotate, cool down on 429/5xx honouring Retry-After, and can be cleared in bulk from /api/admin/keys/clear-cooldowns.",
    "category": "api",
    "area": "providers",
    "icon": "key",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-providers/SKILL.md"
+   "url": "agent-ctx/skills/providers-keys.md"
   },
   {
-   "id": "omni-models",
-   "name": "Models",
-   "description": "Query available AI models across all configured providers. List models, resolve model aliases, and browse the full model catalog including provider-specific variants.",
+   "id": "models-catalogue",
+   "name": "Models Catalogue and Health Sweeps",
+   "description": "Browse, filter, enable or disable and ping every discovered model from the Models tab (/api/admin/models). Sync Catalogue refreshes the curated registry plus each provider live /models, and Disable Unreachable sweeps health so dead models stop competing for requests.",
    "category": "api",
    "area": "models",
    "icon": "neurology",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-models/SKILL.md"
+   "url": "agent-ctx/skills/models-catalogue.md"
   },
   {
-   "id": "omni-combos-routing",
-   "name": "Combos & Routing",
-   "description": "Create and manage routing combos with 19 strategies (priority, weighted, round-robin, Auto-combo, and more). Configure fallback chains, test routing outcomes, and retrieve combo metrics.",
+   "id": "fallback-routes",
+   "name": "Fallback Routes and Preview",
+   "description": "Define per-model fallback chains from the Routes tab (/api/admin/routes) and inspect the Stage 1/2/3 dispatch timeline before saving. At request time the gateway walks the direct upstream, then the explicit chain, then the RouterX Free engine, reporting every stage in _nova.routing.",
    "category": "api",
-   "area": "combos-routing",
+   "area": "routes",
    "icon": "route",
-   "is_entry": false,
-   "is_new": true,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-combos-routing/SKILL.md"
-  },
-  {
-   "id": "omni-api-keys",
-   "name": "API Keys",
-   "description": "Create, list, rotate, and revoke OmniRoute API keys. Control per-key scopes, spending limits, and expiration. Keys gate access to all proxy and management endpoints.",
-   "category": "api",
-   "area": "api-keys",
-   "icon": "vpn_key",
-   "is_entry": false,
+   "is_entry": true,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-api-keys/SKILL.md"
+   "url": "agent-ctx/skills/fallback-routes.md"
   },
   {
-   "id": "omni-usage-logs",
-   "name": "Usage & Logs",
-   "description": "Access detailed call logs and usage analytics. Filter by provider, model, time range, status, and cost. Export logs and aggregate token usage across all connections.",
+   "id": "routing-settings",
+   "name": "Routing Settings",
+   "description": "GET and POST /api/admin/routing configure the strategy, scoring weights, lockout tuning, policies, fallback chains and the model exposure allow/deny lists that nova/routing.py applies to every candidate pool. Lockout state is visible at /api/admin/routing/availability and can be cleared per pair or entirely.",
    "category": "api",
-   "area": "usage-logs",
-   "icon": "bar_chart",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-usage-logs/SKILL.md"
-  },
-  {
-   "id": "omni-budget",
-   "name": "Budget & Rate Limits",
-   "description": "Configure spending limits, token quotas, and rate-limit policies per API key or globally. Inspect current consumption and enforce cost controls across providers.",
-   "category": "api",
-   "area": "budget",
-   "icon": "savings",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-budget/SKILL.md"
-  },
-  {
-   "id": "omni-settings",
-   "name": "Settings",
-   "description": "Read and update global application settings: system prompts, thinking budget, IP filters, payload rules, combo defaults, and require-login configuration.",
-   "category": "api",
-   "area": "settings",
+   "area": "routing",
    "icon": "settings",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-settings/SKILL.md"
+   "url": "agent-ctx/skills/routing-settings.md"
   },
   {
-   "id": "omni-proxies",
-   "name": "Proxy Configuration",
-   "description": "Configure HTTP/HTTPS/SOCKS proxies for upstream provider requests. Set per-provider or global proxy rules, test connectivity, and manage proxy rotation.",
+   "id": "routing-profiles",
+   "name": "Routing Profiles",
+   "description": "Named chains requested as auto:<profile> (GET and POST /api/admin/routing/profiles, DELETE /api/admin/routing/profiles/{name}). A profile carries its own fallbacks, strategy and auto-standins flag; an unknown profile gets a 404 instead of a silent fallback.",
    "category": "api",
-   "area": "proxies",
-   "icon": "swap_horiz",
+   "area": "profiles",
+   "icon": "alt_route",
+   "is_entry": false,
+   "is_new": true,
+   "url": "agent-ctx/skills/routing-profiles.md"
+  },
+  {
+   "id": "routing-strategies",
+   "name": "Routing Strategies and Scoring",
+   "description": "Selection strategies applied to an ordered candidate pool: priority, weighted, round-robin, random, least-used, cost-optimized, rules, cost, latency, sla and lkgp. nova/routing.py scores each candidate on health, reliability, latency, cost, quality and stability with weights you can tune in Routing Settings.",
+   "category": "api",
+   "area": "routing",
+   "icon": "tune",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-proxies/SKILL.md"
+   "url": "agent-ctx/skills/routing-strategies.md"
   },
   {
-   "id": "omni-cache",
-   "name": "Cache",
-   "description": "Manage the LLM response cache. View cache statistics, clear entries, configure TTL policies, and control semantic-similarity caching thresholds.",
+   "id": "usage-analytics",
+   "name": "Usage and Analytics",
+   "description": "The Analytics tab and GET /api/admin/analytics aggregate RequestLog rows into request volume, token usage, provider splits and p50/p95 latency plus time-to-first-token, with a date range and provider/model filters.",
+   "category": "api",
+   "area": "analytics",
+   "icon": "bar_chart",
+   "is_entry": false,
+   "is_new": false,
+   "url": "agent-ctx/skills/usage-analytics.md"
+  },
+  {
+   "id": "response-cache",
+   "name": "Response Cache",
+   "description": "Opt-in content-addressed cache for non-streaming 200 responses without tool calls. Enable it with NOVA_RESPONSE_CACHE or the response_cache knob, bound it with a TTL/LRU policy, and inspect or purge it from GET /api/admin/cache/stats and POST /api/admin/cache/clear. OFF by default.",
    "category": "api",
    "area": "cache",
    "icon": "cached",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-cache/SKILL.md"
+   "url": "agent-ctx/skills/response-cache.md"
   },
   {
-   "id": "omni-compression",
-   "name": "Compression",
-   "description": "Configure RTK (command output), Caveman (prose), and stacked compression modes. Manage language packs, custom rules, and test prompt compression reducing tokens by 60–90%.",
+   "id": "sticky-sessions",
+   "name": "Sticky Sessions",
+   "description": "Send x-nova-session (or metadata.session_id) to pin a conversation to the model that served it. nova/session.py reorders the candidate pool so the pinned model goes first, never dropping a fallback, and reports a _nova.handoff note when the pin had to move.",
    "category": "api",
-   "area": "compression",
-   "icon": "compress",
+   "area": "sessions",
+   "icon": "push_pin",
+   "is_entry": false,
+   "is_new": false,
+   "url": "agent-ctx/skills/sticky-sessions.md"
+  },
+  {
+   "id": "dashboard-tabs",
+   "name": "Dashboard Tabs",
+   "description": "Eleven server-rendered HTMX tabs: overview, playground, console, providers, models, routes, keys, storage, analytics, logs and terminal. Each tab calls this app own JSON API through ui/api_client.py, so the dashboard always reflects the gateway.",
+   "category": "ui",
+   "area": "dashboard",
+   "icon": "dashboard",
+   "is_entry": true,
+   "is_new": false,
+   "url": "agent-ctx/skills/dashboard-tabs.md"
+  },
+  {
+   "id": "playground",
+   "name": "Playground",
+   "description": "A prompt sandbox at the Playground tab: pick a model, tweak the request, send it through POST /v1/chat/completions and read the streamed answer next to the _nova metadata showing which upstream actually answered.",
+   "category": "ui",
+   "area": "playground",
+   "icon": "science",
    "is_entry": false,
    "is_new": true,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-compression/SKILL.md"
+   "url": "agent-ctx/skills/playground.md"
   },
   {
-   "id": "omni-context-rtk",
-   "name": "Context & RTK",
-   "description": "Configure RTK filters, context engineering rules, and context relay settings. Test compression with real prompt samples and manage context transformation pipelines.",
-   "category": "api",
-   "area": "context-rtk",
-   "icon": "data_object",
-   "is_entry": false,
-   "is_new": true,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-context-rtk/SKILL.md"
-  },
-  {
-   "id": "omni-resilience",
-   "name": "Resilience & Monitoring",
-   "description": "Monitor provider health, circuit-breaker states, p50/p95/p99 latency metrics, and budget guard alerts. Inspect connection cooldowns and model lockouts in real time.",
-   "category": "api",
-   "area": "resilience",
-   "icon": "monitor_heart",
-   "is_entry": false,
-   "is_new": true,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-resilience/SKILL.md"
-  },
-  {
-   "id": "omni-cli-tools",
-   "name": "CLI Tools",
-   "description": "Manage CLI tool integrations exposed via the API. List, configure, and invoke CLI tool plugins that extend OmniRoute's automation surface.",
-   "category": "api",
-   "area": "cli-tools",
+   "id": "console",
+   "name": "Console",
+   "description": "One chatbox with three modes: plain chat (streams from /api/v1/chat/completions), dollar-prefixed commands and slash diagnostics in the sandbox executor, and bang-prefixed goals or /agent goals that launch an autonomous agent task whose steps stream into the conversation. An MCP plugin drawer runs registered tools inline.",
+   "category": "ui",
+   "area": "console",
    "icon": "terminal",
-   "is_entry": false,
+   "is_entry": true,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-cli-tools/SKILL.md"
+   "url": "agent-ctx/skills/console.md"
   },
   {
-   "id": "omni-tunnels",
-   "name": "Tunnels",
-   "description": "Create and manage secure tunnels (ngrok, Cloudflare Tunnel, custom) to expose OmniRoute to the internet or share access with remote agents and CI pipelines.",
-   "category": "api",
-   "area": "tunnels",
-   "icon": "vpn_lock",
+   "id": "logs",
+   "name": "Logs",
+   "description": "Every gateway call is written to RequestLog and browsable from the Logs tab (GET /api/admin/logs): filter by provider, model, status and time range, inspect latency, time-to-first-token and token usage, and follow one request by its x-request-id.",
+   "category": "ui",
+   "area": "logs",
+   "icon": "receipt_long",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-tunnels/SKILL.md"
+   "url": "agent-ctx/skills/logs.md"
   },
   {
-   "id": "omni-sync-cloud",
-   "name": "Cloud Sync",
-   "description": "Synchronise OmniRoute configuration, provider connections, and settings to/from cloud storage. Manage cloud worker authentication and remote backup targets.",
-   "category": "api",
-   "area": "sync-cloud",
-   "icon": "cloud_sync",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-sync-cloud/SKILL.md"
-  },
-  {
-   "id": "omni-db-backups",
-   "name": "Database & Backups",
-   "description": "Trigger system backups, restore from backup files, and manage the SQLite database lifecycle. Supports export, import, and incremental snapshot strategies.",
-   "category": "api",
-   "area": "db-backups",
-   "icon": "backup",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-db-backups/SKILL.md"
-  },
-  {
-   "id": "omni-webhooks",
-   "name": "Webhooks",
-   "description": "Register, list, test, and remove webhook endpoints. Configure event subscriptions (request.completed, request.failed, quota.exceeded, etc.) and manage delivery retries.",
-   "category": "api",
-   "area": "webhooks",
-   "icon": "webhook",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-webhooks/SKILL.md"
-  },
-  {
-   "id": "omni-mcp",
-   "name": "MCP Server",
-   "description": "Connect to the OmniRoute MCP server (110 tools, 3 transports: SSE/stdio/HTTP). Covers routing, cache, compression, memory, skills, providers, and audit tools across 33 permission scopes.",
+   "id": "mcp-plugins",
+   "name": "MCP Plugins",
+   "description": "Register external MCP servers (streamable HTTP or stdio) from POST /api/admin/mcp/servers, then refresh and call their tools at /api/admin/mcp/servers/refresh and /servers/call. Tool calls go through nova/mcp_client.py, are scope-checked by nova/mcp_tools.py, and reach the agent as mcp_call.",
    "category": "api",
    "area": "mcp",
    "icon": "electrical_services",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-mcp/SKILL.md"
+   "url": "agent-ctx/skills/mcp-plugins.md"
   },
   {
-   "id": "omni-agents-a2a",
-   "name": "Agents & A2A Protocol",
-   "description": "Interact with OmniRoute via JSON-RPC 2.0 agent-to-agent protocol. 6 built-in A2A skills: smart-routing, quota-management, provider-discovery, cost-analysis, health-report, list-capabilities.",
+   "id": "mcp-scopes",
+   "name": "MCP Scopes and Tool Search",
+   "description": "GET /api/admin/mcp/scopes returns the least-privilege scope table and the tool-to-scope map. A credential that declares scopes only sees tools its scopes cover; no declared scopes means everything is permitted. The ReDoS-safe lexical search_tools() picks which plugin tools to surface to an agent.",
    "category": "api",
-   "area": "agents-a2a",
-   "icon": "device_hub",
+   "area": "mcp",
+   "icon": "policy",
    "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-agents-a2a/SKILL.md"
+   "is_new": true,
+   "url": "agent-ctx/skills/mcp-scopes.md"
   },
   {
-   "id": "omni-version-manager",
-   "name": "Version Manager",
-   "description": "Install, start, stop, restart, and update embedded services (9Router, CLIProxyAPI). Monitor service status, retrieve logs, and configure auto-start for local-only service endpoints.",
+   "id": "agent-skills",
+   "name": "Agent Skill Catalogue",
+   "description": "GET /api/admin/skills serves the RouterX agent-skill catalogue (this list) with categories, areas and per-skill briefing prompts for the autonomous agent; a q query runs a substring search across id, name, description and area.",
    "category": "api",
-   "area": "version-manager",
-   "icon": "manage_history",
+   "area": "skills",
+   "icon": "extension",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-version-manager/SKILL.md"
+   "url": "agent-ctx/skills/agent-skills.md"
   },
   {
-   "id": "omni-inference",
-   "name": "Inference (OpenAI-compatible)",
-   "description": "The core OpenAI-compatible inference endpoints: chat completions, embeddings, images, audio (TTS/STT), moderations, rerank, and the Responses API. The primary integration surface for AI agents.",
+   "id": "agent-tasks",
+   "name": "Autonomous Agent",
+   "description": "POST /api/agent/tasks starts a plan, tool, step loop in nova/agent.py using web_search, read_url, terminal, gateway_stats, storage_scan, discover_models, the file tools, bash_exec and mcp_call. Steps are persisted as AgentStep rows, polled from GET /api/agent/tasks/{id}, and can be cancelled.",
    "category": "api",
-   "area": "inference",
-   "icon": "hub",
+   "area": "agent",
+   "icon": "smart_toy",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-inference/SKILL.md"
+   "url": "agent-ctx/skills/agent-tasks.md"
   },
   {
-   "id": "cli-serve",
-   "name": "CLI: Serve",
-   "description": "Start, stop, and restart the OmniRoute server from the CLI. Manage daemon mode, port configuration, auto-recovery, system tray integration, and the dashboard open shortcut.",
-   "category": "cli",
-   "area": "cli-serve",
-   "icon": "play_circle",
-   "is_entry": true,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-serve/SKILL.md"
-  },
-  {
-   "id": "cli-health",
-   "name": "CLI: Health",
-   "description": "Check server health, component status, and live metrics from the CLI. Run `health`, `health components`, and `health watch` for a real-time dashboard of circuit breakers and provider status.",
-   "category": "cli",
-   "area": "cli-health",
-   "icon": "favorite",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-health/SKILL.md"
-  },
-  {
-   "id": "cli-providers",
-   "name": "CLI: Providers",
-   "description": "Manage provider connections from the CLI: list available/configured providers, add, test, test-all, validate, rotate API keys, and view per-provider metrics.",
-   "category": "cli",
-   "area": "cli-providers",
-   "icon": "key",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-providers/SKILL.md"
-  },
-  {
-   "id": "cli-keys",
-   "name": "CLI: API Keys",
-   "description": "Create, list, rotate, and revoke OmniRoute API keys from the CLI. Manage OAuth flows for provider authentication and inspect key scopes and expiration.",
-   "category": "cli",
-   "area": "cli-keys",
-   "icon": "vpn_key",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-keys/SKILL.md"
-  },
-  {
-   "id": "cli-models",
-   "name": "CLI: Models",
-   "description": "Query available AI models, list model aliases, and browse the full model catalog from the CLI. Filter by provider, search by capability, and resolve model name variants.",
-   "category": "cli",
-   "area": "cli-models",
-   "icon": "neurology",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-models/SKILL.md"
-  },
-  {
-   "id": "cli-chat",
-   "name": "CLI: Chat",
-   "description": "Send chat completions, stream responses, and start an interactive REPL session from the CLI. Supports all OmniRoute providers, combo routing, and system prompt configuration.",
-   "category": "cli",
-   "area": "cli-chat",
-   "icon": "chat",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-chat/SKILL.md"
-  },
-  {
-   "id": "cli-routing",
-   "name": "CLI: Routing & Combos",
-   "description": "Create, list, update, and delete routing combos from the CLI. Test routing strategies, inspect combo metrics, and configure fallback chains interactively.",
-   "category": "cli",
-   "area": "cli-routing",
-   "icon": "route",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-routing/SKILL.md"
-  },
-  {
-   "id": "cli-resilience",
-   "name": "CLI: Resilience & Quotas",
-   "description": "Inspect and manage circuit-breaker states, connection cooldowns, quota limits, and backoff levels from the CLI. Reset stuck providers and configure resilience thresholds.",
-   "category": "cli",
-   "area": "cli-resilience",
-   "icon": "monitor_heart",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-resilience/SKILL.md"
-  },
-  {
-   "id": "cli-compression",
-   "name": "CLI: Compression",
-   "description": "Configure and test prompt compression from the CLI. Manage RTK filters, Caveman rules, stacked compression modes, and preview compression output with real prompts.",
-   "category": "cli",
-   "area": "cli-compression",
-   "icon": "compress",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-compression/SKILL.md"
-  },
-  {
-   "id": "cli-contexts",
-   "name": "CLI: Contexts & Sessions",
-   "description": "Manage context engineering configurations, RTK filter sets, and conversation sessions from the CLI. Apply context-relay settings and inspect active context pipelines.",
-   "category": "cli",
-   "area": "cli-contexts",
-   "icon": "data_object",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-contexts/SKILL.md"
-  },
-  {
-   "id": "cli-cost-usage",
-   "name": "CLI: Cost & Usage",
-   "description": "View cost breakdowns, token usage, and call logs from the CLI. Filter by provider, model, or date range. Export usage reports and inspect per-connection spending.",
-   "category": "cli",
-   "area": "cli-cost-usage",
-   "icon": "savings",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-cost-usage/SKILL.md"
-  },
-  {
-   "id": "cli-mcp",
-   "name": "CLI: MCP",
-   "description": "Inspect the MCP server status, list registered tools and scopes, run tool invocations, and manage MCP audit logs from the CLI.",
-   "category": "cli",
-   "area": "cli-mcp",
-   "icon": "electrical_services",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-mcp/SKILL.md"
-  },
-  {
-   "id": "cli-a2a",
-   "name": "CLI: A2A Protocol",
-   "description": "Interact with the OmniRoute A2A server from the CLI. Send tasks, inspect skill execution history, and test the JSON-RPC 2.0 agent-to-agent protocol interactively.",
-   "category": "cli",
-   "area": "cli-a2a",
-   "icon": "device_hub",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-a2a/SKILL.md"
-  },
-  {
-   "id": "cli-tunnel",
-   "name": "CLI: Tunnels",
-   "description": "Start and stop tunnel connections (ngrok, Cloudflare, custom) from the CLI. Inspect active tunnel URLs, configure authentication, and test external reachability.",
-   "category": "cli",
-   "area": "cli-tunnel",
-   "icon": "vpn_lock",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-tunnel/SKILL.md"
-  },
-  {
-   "id": "cli-backup-sync",
-   "name": "CLI: Backup & Sync",
-   "description": "Backup and restore OmniRoute data from the CLI. Trigger incremental snapshots, sync to cloud storage, manage backup schedules, and restore from archive files.",
-   "category": "cli",
-   "area": "cli-backup-sync",
+   "id": "storage",
+   "name": "Storage and Backups",
+   "description": "Connect Firebase, Supabase, S3/R2, B2 and other targets from the Storage tab (/api/admin/storage) to store files fetched by the agent or written to the workspace, and run one-shot backups from POST /api/admin/storage/backup.",
+   "category": "api",
+   "area": "storage",
    "icon": "backup",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-backup-sync/SKILL.md"
+   "url": "agent-ctx/skills/storage.md"
   },
   {
-   "id": "cli-policy-audit",
-   "name": "CLI: Policy & Audit",
-   "description": "Inspect audit logs, manage access policies, view telemetry data, and review request history from the CLI. Filter by event type, user, or time range for compliance workflows.",
-   "category": "cli",
-   "area": "cli-policy-audit",
-   "icon": "policy",
+   "id": "compute",
+   "name": "Compute (GPU) Providers",
+   "description": "GET /api/admin/compute/providers and POST /api/admin/compute/providers/{id}/toggle manage the free-GPU catalogue and its on/off state; GET and POST /api/admin/compute/config hold the compute settings the console surfaces.",
+   "category": "api",
+   "area": "compute",
+   "icon": "memory",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-policy-audit/SKILL.md"
+   "url": "agent-ctx/skills/compute.md"
   },
   {
-   "id": "cli-batches",
-   "name": "CLI: Batches & Files",
-   "description": "Submit and monitor batch inference jobs from the CLI. Upload and manage files for batch processing, retrieve results, and integrate batch pipelines with CI/CD workflows.",
-   "category": "cli",
-   "area": "cli-batches",
-   "icon": "batch_prediction",
+   "id": "terminal",
+   "name": "Terminal Workspace",
+   "description": "The Terminal tab (or the standalone /terminal page) runs a real PTY per session, max 8 and a 30-minute idle reap, with xterm.js tabs; the console dollar commands instead run in the simulated sandbox executor (allowlisted, no child processes, honest exit codes).",
+   "category": "ui",
+   "area": "terminal",
+   "icon": "terminal",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-batches/SKILL.md"
+   "url": "agent-ctx/skills/terminal.md"
   },
   {
-   "id": "cli-eval",
-   "name": "CLI: Evals",
-   "description": "Create and run evaluation suites, watch live benchmark progress, view scorecards, compare model performance, and integrate eval runs with CI workflows from the CLI.",
-   "category": "cli",
-   "area": "cli-eval",
-   "icon": "science",
+   "id": "free-engine",
+   "name": "RouterX Free Engine",
+   "description": "The built-in keyless engine: a bun/node sidecar (engine/index.js) spawned on loopback that serves routerx/pro, routerx/air, routerx/mini and auto from engine/free-models.json. It is the final fallback stage, needs no configuration, and degrades honestly when no free upstream answers.",
+   "category": "api",
+   "area": "engine",
+   "icon": "bolt",
+   "is_entry": false,
+   "is_new": true,
+   "url": "agent-ctx/skills/free-engine.md"
+  },
+  {
+   "id": "ops-cooldowns",
+   "name": "Cooldowns and Lockouts",
+   "description": "Upstream keys cool down on rate limits and provider faults, and (provider, model) pairs lock out after repeated failures with exponential backoff. Watch both from GET /api/admin/routing/availability and the overview badges, and recover a provider with Clear Cooldowns or by clearing a lockout.",
+   "category": "ops",
+   "area": "resilience",
+   "icon": "monitor_heart",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-eval/SKILL.md"
+   "url": "agent-ctx/skills/ops-cooldowns.md"
   },
   {
-   "id": "cli-plugins-skills",
-   "name": "CLI: Plugins, Skills & Memory",
-   "description": "Manage Omni Skills (list, install, test, remove), plugins (create, configure), and persistent memory (search, add, clear) from the CLI.",
-   "category": "cli",
-   "area": "cli-plugins-skills",
-   "icon": "extension",
-   "is_entry": false,
+   "id": "ops-deploy",
+   "name": "Deployment and Health",
+   "description": "One FastAPI process on 0.0.0.0:PORT (default 3000) serves the gateway API, the admin and agent JSON APIs and the dashboard; the engine sidecar runs on NOVA_ENGINE_PORT (3099). GET /health reports ok together with the engine state, and every gateway route exists under both /v1 and /api/v1.",
+   "category": "ops",
+   "area": "deployment",
+   "icon": "deployed_code",
+   "is_entry": true,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-plugins-skills/SKILL.md"
+   "url": "agent-ctx/skills/ops-deploy.md"
   },
   {
-   "id": "cli-setup",
-   "name": "CLI: Setup & Config",
-   "description": "Run initial setup, configure global CLI settings, manage environment variables, check for updates, and configure autostart via the CLI setup and config commands.",
-   "category": "cli",
-   "area": "cli-setup",
+   "id": "ops-config",
+   "name": "Configuration and Environment",
+   "description": "Environment knobs are read in nova/config.py: DATA/DATABASE_URL, NOVA_REQUIRE_API_KEY, DEFAULT_RPM/TPM/RPD/TPD, key cooldown timings, NOVA_RESPONSE_CACHE, session TTL and upstream timeouts. Defaults never change routing for an untouched deployment; GET /api/admin/meta exposes the UI-relevant ones.",
+   "category": "ops",
+   "area": "config",
    "icon": "build",
    "is_entry": false,
    "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-setup/SKILL.md"
-  },
-  {
-   "id": "cli-skill-collector",
-   "name": "CLI: Agent Skill Collector",
-   "description": "Detect installed CLI coding tools (Claude Code, Codex, Cursor, Copilot, Cline and more), search GitHub for matching agent skills, and install them to the detected tools via OmniRoute's built-in APIs.",
-   "category": "cli",
-   "area": "cli-setup",
-   "icon": "extension",
-   "is_entry": false,
-   "is_new": false,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/cli-skill-collector/SKILL.md"
-  },
-  {
-   "id": "config-codex-cli",
-   "name": "Config: Codex CLI",
-   "description": "Step-by-step agent workflow to configure the OpenAI Codex CLI on any machine (Linux, macOS, Windows) to use OmniRoute as an OpenAI-compatible backend. Detects OS and shell, writes config.toml and 7 named profiles, sets environment variables, and verifies the setup.",
-   "category": "config",
-   "area": "config-codex-cli",
-   "icon": "terminal",
-   "is_entry": false,
-   "is_new": true,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/config-codex-cli/SKILL.md"
-  },
-  {
-   "id": "omni-github-skills",
-   "name": "GitHub Skill Discovery",
-   "description": "Search, score, scan, and import agent skills from GitHub repositories that contain SKILL.md, CLAUDE.md, .cursorrules, and similar agent skill files. Discover community skills across many tool and provider categories, evaluate relevance with heuristic scoring, check for malware or hardcoded secrets, and install into Hermes, Claude Code, Gemini CLI, or OpenCode agent directories.",
-   "category": "api",
-   "area": "github-skills",
-   "icon": "explore",
-   "is_entry": false,
-   "is_new": true,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/omni-github-skills/SKILL.md"
-  },
-  {
-   "id": "ponytail",
-   "name": "Ponytail (Minimalism Ladder)",
-   "description": "External agent skill (MIT, github.com/DietrichGebert/ponytail). Forces the laziest solution that actually works: question whether the task needs to exist at all (YAGNI), reuse what is already in the codebase, reach for the standard library before custom code, native platform features before dependencies, one line before fifty. Climb the ladder on every coding task — writing, adding, refactoring, fixing, reviewing, or designing code, and choosing libraries or dependencies. Supports intensity levels: lite, full (default), ultra. Never cut validation, error handling, security, or accessibility.",
-   "category": "external",
-   "area": "external",
-   "icon": "compress",
-   "is_entry": false,
-   "is_new": true,
-   "url": "https://github.com/diegosouzapw/OmniRoute/blob/main/skills/ponytail/SKILL.md"
+   "url": "agent-ctx/skills/ops-config.md"
   }
  ],
  "mcp_scopes": [
   "read:health",
-  "read:combos",
-  "write:combos",
-  "read:quota",
+  "read:routing",
+  "write:routing",
   "read:usage",
   "read:models",
-  "read:radar",
+  "read:providers",
+  "write:providers",
+  "read:keys",
+  "write:keys",
   "execute:completions",
   "execute:search",
-  "write:budget",
-  "write:resilience",
-  "pricing:write",
   "read:cache",
   "write:cache",
-  "read:compression",
-  "write:compression",
-  "read:proxies"
+  "read:sessions",
+  "read:logs",
+  "read:storage",
+  "write:storage",
+  "read:mcp",
+  "write:mcp",
+  "read:agent",
+  "write:agent"
  ],
  "mcp_tool_scopes": {
-  "omniroute_get_health": [
-   "read:health"
-  ],
-  "omniroute_list_combos": [
-   "read:combos"
-  ],
-  "omniroute_get_combo_metrics": [
-   "read:combos"
-  ],
-  "omniroute_switch_combo": [
-   "write:combos"
-  ],
-  "omniroute_check_quota": [
-   "read:quota"
-  ],
-  "omniroute_route_request": [
-   "execute:completions"
-  ],
-  "omniroute_web_search": [
-   "execute:search"
-  ],
-  "omniroute_x_search": [
-   "execute:search"
-  ],
-  "omniroute_web_fetch": [
-   "execute:search"
-  ],
-  "omniroute_cost_report": [
-   "read:usage"
-  ],
-  "omniroute_list_models_catalog": [
-   "read:models"
-  ],
-  "omniroute_radar_catalog": [
-   "read:radar"
-  ],
-  "omniroute_simulate_route": [
-   "read:health",
-   "read:combos"
-  ],
-  "omniroute_set_budget_guard": [
-   "write:budget"
-  ],
-  "omniroute_set_resilience_profile": [
-   "write:resilience"
-  ],
-  "omniroute_test_combo": [
-   "execute:completions",
-   "read:combos"
-  ],
-  "omniroute_get_provider_metrics": [
-   "read:health"
-  ],
-  "omniroute_best_combo_for_task": [
-   "read:combos",
-   "read:health"
-  ],
-  "omniroute_explain_route": [
-   "read:health",
-   "read:usage"
-  ],
-  "omniroute_get_session_snapshot": [
-   "read:usage"
-  ],
-  "omniroute_db_health_check": [
-   "read:health",
-   "write:resilience"
-  ],
-  "omniroute_sync_pricing": [
-   "pricing:write"
-  ],
-  "omniroute_cache_stats": [
-   "read:cache"
-  ],
-  "omniroute_cache_flush": [
-   "write:cache"
-  ],
-  "omniroute_compression_status": [
-   "read:compression"
-  ],
-  "omniroute_compression_configure": [
-   "write:compression"
-  ],
-  "omniroute_set_compression_engine": [
-   "write:compression"
-  ],
-  "omniroute_list_compression_combos": [
-   "read:compression"
-  ],
-  "omniroute_compression_combo_stats": [
-   "read:compression"
-  ],
-  "omniroute_ccr_store": [
-   "write:compression"
-  ],
-  "omniroute_ccr_retrieve": [
-   "read:compression"
-  ],
-  "omniroute_ccr_inspect": [
-   "read:compression"
-  ],
-  "omniroute_ccr_list": [
-   "read:compression"
-  ],
-  "omniroute_ccr_delete": [
-   "write:compression"
-  ],
-  "omniroute_ccr_stats": [
-   "read:compression"
-  ],
-  "omniroute_oneproxy_fetch": [
-   "read:proxies"
-  ],
-  "omniroute_oneproxy_rotate": [
-   "read:proxies"
-  ],
-  "omniroute_oneproxy_stats": [
-   "read:proxies"
-  ],
-  "omniroute_pool_status": [
-   "read:health"
-  ],
-  "omniroute_pool_sessions": [
-   "read:health"
-  ],
-  "omniroute_pool_health": [
-   "read:health"
-  ],
-  "omniroute_pool_reset": [
-   "write:resilience"
-  ],
-  "omniroute_pool_warm": [
-   "write:resilience"
-  ],
-  "omniroute_browser_pool_status": [
-   "read:health"
-  ]
+  "routerx_get_health": ["read:health"],
+  "routerx_get_routing": ["read:routing"],
+  "routerx_update_routing": ["write:routing"],
+  "routerx_list_availability": ["read:health", "read:routing"],
+  "routerx_clear_lockouts": ["write:routing"],
+  "routerx_list_profiles": ["read:routing"],
+  "routerx_upsert_profile": ["write:routing"],
+  "routerx_preview_route": ["read:routing", "read:models"],
+  "routerx_check_usage": ["read:usage"],
+  "routerx_list_models": ["read:models"],
+  "routerx_list_providers": ["read:providers"],
+  "routerx_test_provider": ["read:providers"],
+  "routerx_rotate_provider_key": ["write:providers"],
+  "routerx_clear_cooldowns": ["write:keys"],
+  "routerx_route_request": ["execute:completions"],
+  "routerx_web_search": ["execute:search"],
+  "routerx_read_url": ["execute:search"],
+  "routerx_cache_stats": ["read:cache"],
+  "routerx_cache_flush": ["write:cache"],
+  "routerx_list_sessions": ["read:sessions"],
+  "routerx_query_logs": ["read:logs"],
+  "routerx_storage_list": ["read:storage"],
+  "routerx_storage_backup": ["write:storage"],
+  "routerx_list_mcp_servers": ["read:mcp"],
+  "routerx_call_mcp_tool": ["write:mcp"],
+  "routerx_mcp_scopes": ["read:mcp"],
+  "routerx_agent_task": ["write:agent"],
+  "routerx_agent_task_status": ["read:agent"]
  }
 }

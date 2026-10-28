@@ -1,13 +1,15 @@
 """Routing + catalogue admin routes, mounted under /api/admin.
 
-Everything here is the operator-facing surface of the OmniRoute port:
+Everything here is the operator-facing surface of the routing brain:
 
   GET  /routing                    current router settings + live availability
   POST /routing                    save strategy / weights / lockout tuning /
                                    policies / fallback chains / exposure lists
   GET  /routing/availability       per-(provider, model) lockouts, cooling-down
   POST /routing/availability/clear clear one lockout, or all of them
-  GET  /catalog                    the OmniRoute provider registry, searchable
+  GET/POST /routing/profiles       named `auto:<name>` chains (list / upsert)
+  DELETE /routing/profiles/{name}  remove a named chain
+  GET  /catalog                    the curated provider registry, searchable
   GET  /catalog/{key}              one provider and its full model list
   GET  /skills                     the curated agent-skill catalogue
   GET  /mcp/scopes                 MCP scope table + tool → scope mapping
@@ -23,7 +25,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from nova import catalog as nova_catalog
-from nova import mcp_tools, router_settings
+from nova import mcp_tools, profiles as nova_profiles, router_settings
 from nova import routing as nova_routing
 from nova.database import get_db
 
@@ -48,6 +50,7 @@ def _router_payload(db: Session) -> dict:
         "chains": settings.chains,
         "exposure": {"denylist": settings.denylist, "allowlist": settings.allowlist},
         "availability": nova_routing.LOCKOUTS.report(),
+        "profiles": nova_profiles.load_profiles(db),
     }
 
 
@@ -104,7 +107,72 @@ async def clear_availability(request: Request, db: Session = Depends(get_db)):
 
 
 # --------------------------------------------------------------------------- #
-# OmniRoute catalogue
+# Named routing profiles (`auto:<name>`)
+# --------------------------------------------------------------------------- #
+
+def _profile_name(raw) -> str:
+    """Profile names are URL/model-id safe: lower-case, no spaces or colons."""
+    name = str(raw or "").strip().lower()
+    if name.startswith(nova_profiles.AUTO_PREFIX):
+        name = name[len(nova_profiles.AUTO_PREFIX):]
+    cleaned = "".join(ch for ch in name if ch.isalnum() or ch in "-_.")
+    return cleaned[:40]
+
+
+@router.get("/routing/profiles")
+def list_profiles(db: Session = Depends(get_db)):
+    """Every profile plus the strategies a profile may use."""
+    stored = nova_profiles.load_profiles(db)
+    return JSONResponse({
+        "profiles": [{"id": f"auto:{name}", "name": name, **spec} for name, spec in stored.items()],
+        "strategies": list(nova_routing.STRATEGIES),
+        "auto_standins_default": True,
+    })
+
+
+@router.post("/routing/profiles")
+async def save_profile(request: Request, db: Session = Depends(get_db)):
+    """Create or update one profile: `{name, fallbacks, strategy, auto_standins, note}`."""
+    body = await _body(request)
+    name = _profile_name(body.get("name") or body.get("id"))
+    if not name:
+        return JSONResponse({"error": "Profile name is required (letters, digits, - _ .)"},
+                            status_code=400)
+    fallbacks = body.get("fallbacks")
+    if fallbacks is not None and not isinstance(fallbacks, (list, str)):
+        return JSONResponse({"error": "fallbacks must be a list of model ids"}, status_code=400)
+    strategy = body.get("strategy")
+    if strategy not in (None, "") and str(strategy).strip().lower() not in nova_routing.STRATEGIES:
+        return JSONResponse({"error": f"Unknown strategy '{strategy}'",
+                             "strategies": list(nova_routing.STRATEGIES)}, status_code=400)
+
+    stored = nova_profiles.load_profiles(db)
+    existing = stored.get(name, {})
+    spec = {
+        "fallbacks": fallbacks if fallbacks is not None else existing.get("fallbacks", []),
+        "strategy": strategy if strategy not in (None, "") else existing.get("strategy", ""),
+        "auto_standins": body.get("auto_standins", existing.get("auto_standins", True)),
+        "note": body.get("note", existing.get("note", "")),
+    }
+    stored[name] = nova_profiles.normalize_spec(spec)
+    nova_profiles.save_profiles(db, stored)
+    return JSONResponse({"ok": True, "profile": {"id": f"auto:{name}", "name": name, **stored[name]},
+                         "profiles": nova_profiles.load_profiles(db)})
+
+
+@router.delete("/routing/profiles/{name}")
+def delete_profile(name: str, db: Session = Depends(get_db)):
+    key = _profile_name(name)
+    stored = nova_profiles.load_profiles(db)
+    if key not in stored:
+        return JSONResponse({"error": f"Unknown profile '{key}'"}, status_code=404)
+    stored.pop(key)
+    nova_profiles.save_profiles(db, stored)
+    return JSONResponse({"ok": True, "removed": key, "profiles": nova_profiles.load_profiles(db)})
+
+
+# --------------------------------------------------------------------------- #
+# Curated catalogue
 # --------------------------------------------------------------------------- #
 
 

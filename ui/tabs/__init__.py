@@ -1,7 +1,8 @@
 """Tab registry — each dashboard tab is its own Python module + templates.
 
-Tabs (mirroring the React original): overview, console, providers, models,
-routes, keys, storage, analytics, logs. Every tab module defines:
+Tabs (mirroring the React original): overview, playground, console, providers,
+models, routes, keys, storage, analytics, logs, terminal. Every tab module
+defines:
   • router: APIRouter with GET /partials/tab/<key> (the main fragment)
   • optional /ui/<key>/... action endpoints returning HTML fragments
 """
@@ -16,6 +17,7 @@ from ui.tabs import (  # noqa: F401  (side-effect free, each exports `router`)
     logs,
     models,
     overview,
+    playground,
     providers,
     routes,
     storage,
@@ -23,7 +25,7 @@ from ui.tabs import (  # noqa: F401  (side-effect free, each exports `router`)
 )
 
 router = APIRouter(tags=["ui:tabs"])
-for _module in (overview, console, providers, models, routes, keys, storage, analytics, logs, terminal):
+for _module in (overview, playground, console, providers, models, routes, keys, storage, analytics, logs, terminal):
     router.include_router(_module.router)
 
 ui_router = APIRouter(tags=["ui"])

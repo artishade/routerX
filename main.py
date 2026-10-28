@@ -31,6 +31,7 @@ from fastapi.routing import APIRouter
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
+from nova import auth as nova_auth
 from nova import engine as nova_engine
 from maintenance import periodic_maintenance
 from nova.bootstrap import run_bootstrap
@@ -83,6 +84,9 @@ async def lifespan(_app: FastAPI):
     await nova_engine.start_sidecar()
     # Start periodic maintenance task (sync + disable dead) every 12h
     asyncio.create_task(periodic_maintenance())
+    # Usage windows (nova.ratelimit) keep 2 days; prune hourly. The gateway also
+    # prunes lazily (at most once an hour) when no loop has run yet.
+    asyncio.create_task(usage_maintenance())
     log.info("RouterX up on 0.0.0.0:%s (Python UI + API)", PORT)
     yield
     try:
@@ -181,9 +185,13 @@ async def gateway_request_log(request: Request, call_next):
     response = await call_next(request)
     dur_ms = int((time.time() - started) * 1000)
     response.headers["x-request-id"] = request_id
+    principal = getattr(request.state, "client_principal", None)
+    client_name = getattr(principal, "name", "") if principal is not None else ""
     line = (f"{request.client.host if request.client else '-'} "
             f"{request.method} {path} -> {response.status_code} {dur_ms}ms "
             f"request_id={request_id}")
+    if client_name:
+        line += f" client={client_name}"
     if body_snip:
         line += f" | {body_snip}"
     if response.status_code >= 400:
@@ -199,6 +207,52 @@ async def gateway_request_log(request: Request, call_next):
     except Exception:
         pass
     return response
+
+
+async def usage_maintenance() -> None:
+    """Prune old rate-limit windows hourly (keep 2 days). Never raises."""
+    from nova import ratelimit as nova_ratelimit
+    from nova.database import SessionLocal
+
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            with SessionLocal() as db:
+                removed = nova_ratelimit.prune_usage(db)
+            if removed:
+                log.info("usage maintenance: pruned %s old window(s)", removed)
+        except Exception as err:  # noqa: BLE001 - maintenance must never kill the app
+            log.warning("usage maintenance failed: %s", err)
+
+
+@app.exception_handler(nova_auth.AuthError)
+async def gateway_auth_error(request: Request, exc: nova_auth.AuthError):
+    """401/403/429 from the client-key dependency, in the client's protocol shape.
+
+    `nova.auth.gateway_auth` runs before the endpoint, so its refusals never
+    reach the endpoint's own try/except. The RequestLog row is written here (the
+    endpoint has not had a chance to), and `Retry-After` rides along for both
+    401 and 429 so a well-behaved client backs off instead of hammering.
+    """
+    from nova.database import SessionLocal
+
+    path = request.url.path
+    request_id = getattr(request.state, "request_id", "") or uuid.uuid4().hex[:32]
+    try:
+        from nova.models import RequestLog
+
+        with SessionLocal() as db:
+            db.add(RequestLog(model="", providerName="", endpoint=path, status=exc.status,
+                              latencyMs=0, via="auth", error=f"{exc.code}: {exc.message}"))
+            db.commit()
+    except Exception:
+        pass
+    if path.endswith("/messages"):
+        body = {"type": "error", "error": {"type": "api_error", "message": exc.message, "code": exc.code}}
+    else:
+        body = exc.to_payload()
+    headers = {**exc.headers(), "x-request-id": request_id}
+    return JSONResponse(body, status_code=exc.status, headers=headers)
 
 
 @app.exception_handler(Exception)
@@ -297,6 +351,7 @@ from routers import (  # noqa: E402
     admin_client_keys,
     admin_compute,
     admin_keys,
+    admin_limits,
     admin_mcp,
     admin_misc,
     admin_models,
@@ -322,6 +377,7 @@ admin_router.include_router(admin_compute.router, prefix="/compute", tags=["comp
 admin_router.include_router(admin_storage.router, prefix="/storage", tags=["storage"])
 admin_router.include_router(admin_mcp.router, prefix="/mcp", tags=["mcp"])
 admin_router.include_router(admin_misc.router, tags=["misc"])
+admin_router.include_router(admin_limits.router, tags=["limits"])
 
 # Permanent cloud build config (Root@Build terminal) — providers, tool registry.
 build_router = APIRouter(prefix="/api/build")
@@ -345,7 +401,26 @@ from ui.tabs import ui_router  # noqa: E402
 
 app.include_router(shell_router)
 app.include_router(ui_router)
-app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "static")), name="static")
+class CachedStaticFiles(StaticFiles):
+    """Static assets with a correct Cache-Control.
+
+    Without a header a browser (and every CDN/proxy in front of Render) is free
+    to revalidate or heuristically cache forever. Templates reference these
+    files with a `?v=` query — that query is not forwarded to the directory, so
+    the version token is the only invalidation: `must-revalidate` keeps a
+    swapped asset from sticking for days, while `max-age=0` repaints a page
+    that embeds a stale one only after an ETag check (StaticFiles still answers
+    `304` from the request's validators).
+    """
+
+    async def get_response(self, path, scope):  # noqa: ANN001 - Starlette signature
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 304):
+            response.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
+        return response
+
+
+app.mount("/static", CachedStaticFiles(directory=str(PROJECT_ROOT / "static")), name="static")
 
 
 if __name__ == "__main__":

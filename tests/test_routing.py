@@ -1,4 +1,4 @@
-"""The routing brain ported from OmniRoute — tag routing, policies, lockouts,
+"""RouterX routing brain — tag routing, policies, lockouts,
 fallback chains, selection strategies, the model exposure lists, the catalogue
 and the MCP tool search.
 
@@ -302,38 +302,73 @@ class PlanTests(unittest.TestCase):
 
 
 class CatalogTests(unittest.TestCase):
+    """The catalogue is real data: assert its shape, then assert it answers.
+
+    The counts are floors, not magic numbers: the registry is curated by hand,
+    so the exact size moves, but shipping fewer providers/models than these
+    floors means entries were dropped by accident. The model ids below are the
+    real ids in `nova/data/provider_registry.json` (a provider the operator
+    configures seeds its models as `<provider-key>/<model-id>`).
+    """
+
     def test_catalogue_is_loaded_and_populated(self):
         source = catalog.source()
-        self.assertIn("OmniRoute", source["source"])
-        self.assertGreater(source["providers"], 100)
-        self.assertGreater(source["models"], 1000)
+        self.assertIn("RouterX", source["source"])
+        self.assertGreaterEqual(source["providers"], 15)
+        self.assertGreaterEqual(source["models"], 60)
 
     def test_every_seeded_model_survives_a_retired_vendor_drop(self):
-        # `claude-3-5-sonnet-20241022` is retired per the lifecycle snapshot the
-        # catalogue was generated from: it is not a catalogue id of its own, so
-        # it is never advertised or dispatched as itself.
+        # `claude-3-5-sonnet-20241022` is retired: it is not a catalogue id of
+        # its own, so it is never advertised or dispatched as itself.
         listed = {m["id"] for p in catalog.providers() for m in p["models"]}
         self.assertNotIn("claude-3-5-sonnet-20241022", listed)
         resolved = catalog.resolve("claude-3-5-sonnet-20241022")
         self.assertNotEqual((resolved or {}).get("id"), "claude-3-5-sonnet-20241022")
 
     def test_resolution_handles_bare_prefixed_and_suffixed_ids(self):
-        self.assertIsNotNone(catalog.resolve("claude-opus-5"))
-        self.assertIsNotNone(catalog.resolve("anthropic/claude-opus-5"))
-        self.assertIsNotNone(catalog.resolve("moonshotai/kimi-k3-free"))
+        # `claude-opus-4-5` exists in the registry and *only* there, so exact,
+        # prefixed and suffixed spellings must all land on the same entry.
+        self.assertEqual((catalog.resolve("claude-opus-4-5") or {}).get("id"), "claude-opus-4-5")
+        self.assertEqual((catalog.resolve("anthropic/claude-opus-4-5") or {}).get("id"), "claude-opus-4-5")
+        self.assertEqual((catalog.resolve("claude-opus-4-5-free") or {}).get("id"), "claude-opus-4-5")
         self.assertIsNone(catalog.resolve(""))
 
+    def test_resolution_works_for_a_model_from_each_of_several_providers(self):
+        # The seeded form the gateway sees: <provider-key>/<model-id>.
+        for exposed in (
+            "anthropic/claude-opus-4-5",
+            "openai/gpt-4o",
+            "deepseek/deepseek-reasoner",
+            "groq/llama-3.3-70b-versatile",
+            "gemini/gemini-2.5-flash",
+            "mistral/mistral-small-latest",
+            "xai/grok-3",
+            "cerebras/qwen-3-32b",
+            "cohere/command-r-plus-08-2024",
+        ):
+            with self.subTest(exposed=exposed):
+                provider_key, model_id = exposed.split("/", 1)
+                entry = catalog.resolve(exposed)
+                self.assertIsNotNone(entry, exposed)
+                self.assertEqual(entry["id"], model_id)
+                self.assertIn(provider_key, catalog.providers_for_model(model_id))
+
     def test_capabilities_and_context_come_from_the_registry(self):
-        entry = catalog.resolve("claude-opus-5")
+        # `deepseek-reasoner` is declared with reasoning in the registry; the
+        # capability answer must come from there, not from a per-provider guess.
+        entry = catalog.resolve("deepseek-reasoner")
+        self.assertIsNotNone(entry)
         self.assertTrue(entry["caps"]["reasoning"])
-        self.assertGreater(entry["ctx"], 0)
-        self.assertTrue(catalog.is_known("claude-opus-5"))
+        self.assertTrue(catalog.capabilities("deepseek-reasoner")["reasoning"])
+        self.assertFalse(catalog.capabilities("claude-haiku-4-5")["reasoning"])
+        self.assertGreater(catalog.context_length("deepseek-reasoner"), 0)
+        self.assertTrue(catalog.is_known("deepseek-reasoner"))
 
     def test_providers_and_search(self):
         self.assertEqual(catalog.provider("anthropic")["kind"], "anthropic")
         self.assertGreater(len(catalog.provider_models("anthropic")), 1)
-        self.assertIn("anthropic", catalog.providers_for_model("claude-opus-5"))
-        self.assertTrue(catalog.search("kimi"))
+        self.assertIn("anthropic", catalog.providers_for_model("claude-opus-4-5"))
+        self.assertTrue(catalog.search("claude"))
         self.assertEqual(catalog.search(""), [])
 
 
@@ -367,12 +402,14 @@ class McpToolTests(unittest.TestCase):
         tools = [{"name": "read", "scopes": ["read:health"]}, {"name": "write", "scopes": ["write:combos"]}]
         self.assertEqual([t["name"] for t in mcp_tools.filter_by_scope(tools, ["read:health"])], ["read"])
 
-    def test_ported_scope_and_skill_tables_are_loaded(self):
+    def test_scope_and_skill_tables_are_loaded(self):
         self.assertIn("read:health", mcp_tools.scopes())
-        self.assertGreater(len(mcp_tools.skills()), 40)
-        self.assertEqual(mcp_tools.skill("omni-providers")["category"], "api")
+        skills = mcp_tools.skills()
+        self.assertGreaterEqual(len(skills), 20)
+        self.assertTrue(all(s["id"] for s in skills))
+        self.assertEqual(mcp_tools.skill("providers-keys")["category"], "api")
         self.assertIsNone(mcp_tools.skill("nope"))
-        self.assertIn("Providers", mcp_tools.skill_prompt("omni-providers"))
+        self.assertIn("Providers", mcp_tools.skill_prompt("providers-keys"))
         self.assertTrue(mcp_tools.search_skills("provider"))
 
 

@@ -1,7 +1,7 @@
 {# Route create/edit dialog — port of RouteFormDialog in RoutesTab.tsx.
    Context: editing, route_id, initial {public_id, fallbacks, auto, note}, models, error #}
 <dialog id="rt-form-dialog" aria-label="{{ 'Edit route' if editing else 'New fallback route' }}"
-  class="h-fit w-[calc(100%-2rem)] max-w-xl rounded-xl border border-slate-800 bg-[#0b0b0b] p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
+  class="h-fit w-[calc(100%-2rem)] max-w-xl nx-panel p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
   <form hx-post="{{ ('/ui/routes/' ~ (route_id | urlencode) ~ '/update') if editing else '/ui/routes/create' }}"
     hx-target="#rt-form-zone" hx-swap="innerHTML">
     <div x-data='rtChain({{ initial.fallbacks | tojson }}, {{ initial.auto | tojson }})'>
@@ -37,7 +37,7 @@
               autocomplete="off" spellcheck="false" aria-label="Search models to add to the fallback chain"
               hx-get="/ui/routes/models" hx-trigger="input changed delay:250ms, search" hx-target="#rt-model-list" hx-swap="innerHTML"
               @keydown.enter.prevent
-              class="w-full rounded-md border border-slate-800 bg-[#000000] py-2 pl-8 pr-3 font-mono text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-emerald-500/50" />
+              class="w-full rounded-md border border-slate-800 bg-[#050505] py-2 pl-8 pr-3 font-mono text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-emerald-500/50" />
           </div>
           <div id="rt-model-list" class="max-h-44 overflow-y-auto rounded-lg border border-slate-800 bg-black/20 p-2.5">
             {% include 'partials/routes_models.html' %}

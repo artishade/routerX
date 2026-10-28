@@ -23,14 +23,56 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from . import catalog, registry
 from .models import Model, Provider
 from .provider_transport import anthropic_headers, anthropic_url
 
 DISCOVERY_TTL_MS = 5 * 60 * 1000
 FETCH_TIMEOUT_S = 8.0
 
-KEYLESS_PROVIDERS = {"openrouter"}
+# Keylessness is a property of the catalogue (`requires_key: false`), never a
+# hardcoded list: a provider that needs no credential must be discoverable
+# without one, and one that needs a key must never be dialled without it.
+# `_KEYLESS_FALLBACK` only covers a deployment whose catalogue is missing or
+# unreadable, where `requires_key` would otherwise say nothing at all.
+_KEYLESS_FALLBACK = frozenset({"pollinations", "ovh", "aihorde", "ollama"})
+
 FREE_PROVIDERS = {"novafree", "ollama"}
+
+
+def is_keyless_provider(provider_key: str, kind: str | None = None) -> bool:
+    """Whether `provider_key` works without an API key.
+
+    Resolved from the curated catalogue (`nova.registry.is_keyless`), which
+    derives it from the single `requires_key` field. Builtin providers never
+    need a credential either. A provider absent from the catalogue falls back
+    to the known keyless set, so discovery keeps working for a hand-added row.
+    """
+    key = (provider_key or "").strip()
+    if not key:
+        return False
+    if kind == "builtin":
+        return True
+    entry = catalog.provider(key)
+    if entry is not None:
+        try:
+            return registry.is_keyless(entry)
+        except Exception:  # noqa: BLE001 — a malformed entry must not crash discovery
+            pass
+    return key.lower() in _KEYLESS_FALLBACK
+
+
+def keyless_providers() -> set[str]:
+    """Every catalogue provider that needs no API key (plus the fallback set)."""
+    out = set(_KEYLESS_FALLBACK)
+    for entry in catalog.providers():
+        try:
+            if registry.is_keyless(entry):
+                out.add(str(entry.get("key") or "").lower())
+        except Exception:  # noqa: BLE001
+            continue
+    out.discard("")
+    return out
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
 
@@ -95,6 +137,17 @@ def _from_openai_compatible(raw: dict, provider_key: str, provider_id: int, prov
     }
 
 
+def _is_ollama_root(base: str) -> bool:
+    """True for a loopback Ollama server (the only place `api/tags` exists)."""
+    from urllib.parse import urlsplit
+
+    try:
+        host = (urlsplit(base or "").hostname or "").lower()
+    except ValueError:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+
 async def _fetch_json(url: str, headers: dict | None = None, log=None, log_url: str | None = None) -> Any:
     if log:
         log(f"GET {log_url or url}")
@@ -116,11 +169,12 @@ async def _fetch_json(url: str, headers: dict | None = None, log=None, log_url: 
 
 async def _discover_openai_compatible(base, key, provider_key, provider_id, provider_name, log=None) -> list[dict]:
     headers: dict = {}
-    if key and provider_key not in KEYLESS_PROVIDERS:
+    keyless = is_keyless_provider(provider_key)
+    if key and not keyless:
         headers["Authorization"] = f"Bearer {key}"
         if log:
             log("auth: Bearer key (masked)")
-    elif provider_key in KEYLESS_PROVIDERS:
+    elif keyless:
         if log:
             log("auth: none (keyless provider — public directory)")
     data = await _fetch_json(_join_url(base, "models"), headers, log=log)
@@ -251,7 +305,9 @@ async def _discover_one(db: Session, p: Provider, api_key: str | None, log=None)
             models = await _discover_gemini(p.baseUrl, api_key, p.id, p.name, log=log)
         elif p.kind == "anthropic":
             models = await _discover_anthropic(p.baseUrl, api_key, p.id, p.name, log=log)
-        elif p.key == "ollama":
+        elif p.key == "ollama" and _is_ollama_root(p.baseUrl):
+            # Only the native `api/tags` listing applies to a real Ollama root;
+            # a hosted Ollama-compatible gateway keeps the OpenAI `/models` path.
             models = await _discover_ollama(p.baseUrl, p.id, p.name, log=log)
         else:
             models = await _discover_openai_compatible(p.baseUrl, api_key, p.key, p.id, p.name, log=log)
@@ -295,7 +351,7 @@ async def discover_provider_models(db: Session, provider_key: str | None = None)
     providers = _load_providers(db, provider_key)
     results: list[dict] = []
     for p in providers:
-        needs_key = p.kind != "builtin" and p.key not in KEYLESS_PROVIDERS
+        needs_key = p.kind != "builtin" and not is_keyless_provider(p.key, p.kind)
         api_key = next((k.apiKey for k in p.keys if k.enabled), None)
         if needs_key and not api_key:
             results.append(_no_key_result(p))
@@ -315,7 +371,7 @@ async def discover_provider_fresh(db: Session, provider_id: int, log=None) -> di
             "count": 0, "models": [], "error": "provider not found",
             "duration_ms": 0, "cached": False,
         }
-    needs_key = p.kind != "builtin" and p.key not in KEYLESS_PROVIDERS
+    needs_key = p.kind != "builtin" and not is_keyless_provider(p.key, p.kind)
     api_key = next((k.apiKey for k in p.keys if k.enabled), None)
     if needs_key and not api_key:
         if log:

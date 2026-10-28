@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark no-js">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
@@ -11,10 +11,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <!-- Critical fallback so the shell never renders white if the Tailwind CDN is unreachable -->
   <style>
-    html { background: #000000; color: #e5e5e5; }
-    body { margin: 0; font-family: Geist, ui-sans-serif, system-ui, sans-serif; }
+    html { background: #050505; color: #e5e5e5; }
+    body { margin: 0; font-family: Geist, ui-sans-serif, system-ui, sans-serif; background: #050505; }
+    /* Without JavaScript, .nx-reveal elements would stay at opacity: 0. */
+    html.no-js .nx-reveal { opacity: 1 !important; transform: none !important; animation: none !important; }
     #shell { display: flex; min-height: 100vh; }
-    #sidebar { width: 3.5rem; background: #000000; border-right: 1px solid #1a1a1a; }
+    #sidebar { width: 3.5rem; background: rgba(5, 5, 5, 0.82); border-right: 1px solid #1a1a1a; }
     #right-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   </style>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -27,24 +29,25 @@
             sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif'],
             mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
           },
-          // RouterX theme: Vantablack surfaces (#000000 page / #000000 panels,
-          // near-black borders) with a **neon green** interaction accent and
-          // #6A1C0F for error lines.
+          // RouterX theme — "Dark AI World".
+          // Matte-black surfaces (#050505 page / #0b0b0b panels, neutral borders)
+          // with a **darkest-red** interaction accent.
           //
-          // `emerald` is deliberately remapped to the RouterX neon-green ramp:
-          // every existing accent utility (buttons, links, active nav, focus
-          // rings, toggles, chips) is written against that scale, so the accent
-          // is themed in ONE place instead of across ~500 class attributes.
-          // `slate` is remapped to a neutral ramp so no surface or border keeps
-          // the old navy cast.
-          // `rose` is remapped to the error ramp (#6A1C0F family) so all error
-          // borders/text/accents use the user's specified error color.
-          // Success/health semantics do NOT ride this ramp — those use `green`.
+          // `emerald` is deliberately remapped to the RouterX red ramp: every
+          // accent utility (buttons, links, active nav, focus rings, toggles,
+          // chips) is written against that scale, so the accent is themed in ONE
+          // place instead of across ~500 class attributes.
+          //   Use 300 for accent TEXT on dark (7.40:1 on #050505),
+          //   400 for icons/large text (5.78:1), 500/600 for solid fills.
+          //   White text on emerald-500 is 7.0:1, so filled buttons keep text-white.
+          // `slate` is remapped to a neutral ramp so no surface keeps the navy cast.
+          // `rose` stays the error ramp, `green` semantic success/health (NOT
+          // remapped), `amber` warnings, `purple` reserved for RAM/spoof accents.
           colors: {
             emerald: {
-              50: '#f0fdf4', 100: '#dcfce7', 200: '#bbf7d0', 300: '#86efac',
-              400: '#22c55e', 500: '#16a34a', 600: '#15803d', 700: '#166534',
-              800: '#0f4429', 900: '#133d23', 950: '#0a1a10',
+              50: '#fdf2f1', 100: '#fbe3e1', 200: '#f6c9c4', 300: '#e8564a',
+              400: '#da4f43', 500: '#a8281b', 600: '#7f1d14', 700: '#5e140e',
+              800: '#3d0d09', 900: '#2a0906', 950: '#170504',
             },
             slate: {
               50: '#fafafa', 100: '#f5f5f5', 200: '#e5e5e5', 300: '#d4d4d4',
@@ -70,15 +73,28 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-  <link rel="stylesheet" href="/static/nova.css?v=7" />
-  <script src="/static/app.js?v=5" defer></script>
+  <!-- nova.css = behaviour (sidebar, terminal, mobile sheets). nova-world.css =
+       the Dark AI World look (background, panels, motion). -->
+  <link rel="stylesheet" href="/static/nova.css?v=8" />
+  <link rel="stylesheet" href="/static/nova-world.css?v=1" />
+  <script src="/static/app.js?v=6" defer></script>
 </head>
-<body class="sb-expanded bg-[#000000] font-sans text-slate-200 antialiased">
+<body class="nx-grain sb-expanded bg-[#050505] font-sans text-slate-200 antialiased">
+  {# Layered backdrop — fixed, z-index:-1, never intercepts pointer events,
+     so panels and the xterm canvas above it stay crisp. #}
+  <div class="nx-world" aria-hidden="true">
+    <div class="nx-aurora"></div>
+    <div class="nx-mesh"></div>
+    <div class="nx-scan"></div>
+    <div class="nx-vignette"></div>
+  </div>
   <div id="shell" class="flex min-h-screen">
-    {# ----------------------------- Sidebar ----------------------------- #}      {% set groups = [
+    {# ----------------------------- Sidebar ----------------------------- #}
+    {% set groups = [
       ('Operate', [
         ('overview', 'Overview', 'layout-dashboard', 'Gateway health at a glance'),
         ('terminal', 'RouterX Console', 'square-terminal', 'Cloud workspace — opens the Root@Build terminal + console in a new tab'),
+        ('playground', 'Playground', 'flask-conical', 'Send a request through your own gateway'),
       ]),
       ('Gateway', [
         ('providers', 'Providers', 'server', 'Upstream accounts, keys and sign-in'),
@@ -95,14 +111,14 @@
       ]),
     ] %}
     <aside id="sidebar"
-      class="sticky top-0 z-30 flex h-screen shrink-0 flex-col border-r border-slate-800 bg-[#000000] transition-[width] duration-200 ease-out">
+      class="sticky top-0 z-30 flex h-screen shrink-0 flex-col border-r border-slate-800/80 bg-[#050505]/80 backdrop-blur-xl transition-[width] duration-200 ease-out">
       {# Brand + collapse toggle #}
-      <div class="brand-row flex h-14 shrink-0 items-center border-b border-slate-800">
+      <div class="brand-row flex h-14 shrink-0 items-center border-b border-slate-800/80">
         <div class="flex min-w-0 items-center gap-2.5">
-          <div class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-emerald-400/40 bg-emerald-400/10 font-mono text-lg font-bold text-emerald-400">N</div>
+          <div class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 font-mono text-lg font-bold text-emerald-300 shadow-[0_0_20px_-6px_rgba(168,40,27,0.9)]">N</div>
           <div class="sb-only min-w-0">
-            <div class="truncate text-sm font-semibold tracking-tight text-slate-100">RouterX</div>
-            <div class="text-[10px] uppercase tracking-widest text-slate-500">Gateway Console</div>
+            <div class="nx-display truncate text-sm font-semibold tracking-tight">RouterX</div>
+            <div class="nx-kicker mt-0.5">Gateway Console</div>
           </div>
         </div>
         <button id="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar"
@@ -116,15 +132,15 @@
         {% for gi in range(groups | length) %}
         {% set glabel, items = groups[gi] %}
         <div class="{{ 'mt-5' if gi > 0 else '' }}">
-          <div class="sb-only mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-600">{{ glabel }}</div>
+          <div class="sb-only mb-1.5 px-3 nx-kicker">{{ glabel }}</div>
           <div class="{{ 'sb-collapsed-only border-t border-slate-800/80 mx-3 mb-2' if gi > 0 else '' }}"></div>
           <div class="flex flex-col gap-0.5">
             {% for key, label, icon, sub in items %}
             <button type="button" data-tab="{{ key }}" data-label="{{ label }}" data-subtitle="{{ sub }}"
               aria-label="{{ label }}" aria-current="false"
               class="nav-item group relative flex w-full items-center rounded-lg text-sm transition-colors text-slate-400 hover:bg-slate-800/60 hover:text-slate-200">
-              <span class="nav-active-bar absolute left-0 top-1/2 hidden h-5 w-0.5 -translate-y-1/2 rounded-full bg-emerald-400"></span>
-              <i data-lucide="{{ icon }}" class="nav-icon size-4 shrink-0 text-slate-500 group-hover:text-slate-300"></i>
+              <span class="nav-active-bar absolute left-0 top-1/2 hidden h-5 w-0.5 -translate-y-1/2 rounded-full bg-emerald-300" aria-hidden="true"></span>
+              <i data-lucide="{{ icon }}" class="nav-icon size-4 shrink-0 text-slate-500 transition-colors group-hover:text-slate-200 group-[.is-active]:text-emerald-300"></i>
               <span class="sb-only truncate">{{ label }}</span>
             </button>
             {% endfor %}
@@ -135,18 +151,15 @@
 
       {# Gateway health mini-card #}
       <div class="shrink-0 p-2 pb-3">
-        <div class="sb-only rounded-xl border border-slate-800 bg-[#000000] p-3">
+        <div class="sb-only nx-panel p-3">
           <div class="flex items-center gap-2">
-            <span class="relative flex size-2">
-              <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"></span>
-              <span class="relative inline-flex size-2 rounded-full bg-emerald-400"></span>
-            </span>
+            <span class="nx-pulse-dot" aria-hidden="true"></span>
             <span class="text-xs font-medium text-slate-300">Gateway online</span>
           </div>
           <div class="mt-1.5 font-mono text-[10px] text-slate-500">RouterX v2.0</div>
         </div>
         <button id="sb-expand-bottom" type="button" title="Expand sidebar" aria-label="Expand sidebar"
-          class="sb-collapsed-only h-9 w-full items-center justify-center border-t border-slate-800/70 text-slate-500 transition-colors hover:text-emerald-400">
+          class="sb-collapsed-only h-9 w-full items-center justify-center border-t border-slate-800/70 text-slate-500 transition-colors hover:text-emerald-300">
           <i data-lucide="chevrons-right" class="size-4"></i>
         </button>
       </div>
@@ -155,36 +168,35 @@
     {# --------------------------- Right column --------------------------- #}
     <div id="right-col" class="flex min-w-0 flex-1 flex-col">
       {# Header #}
-      <header class="sticky top-0 z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-slate-800 bg-[#000000]/80 px-4 backdrop-blur md:px-6">
+      <header class="sticky top-0 z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-slate-800/80 bg-[#050505]/70 px-4 backdrop-blur-xl md:px-6">
         <div class="min-w-0">
           <h1 id="tab-title" class="truncate text-sm font-semibold leading-tight text-slate-100">Overview</h1>
           <p id="tab-subtitle" class="hidden truncate text-[11px] leading-tight text-slate-500 sm:block">Gateway health at a glance</p>
         </div>
         <div class="flex shrink-0 items-center gap-2 md:gap-3">
-          <div id="baseurl-chip" class="hidden items-center gap-1.5 rounded-md border border-slate-800 bg-[#000000] py-1 pl-2.5 pr-1 font-mono text-[11px] text-slate-400 md:flex">
+          <div id="baseurl-chip" class="hidden items-center gap-1.5 rounded-md border border-slate-800 bg-[#0b0b0b]/80 py-1 pl-2.5 pr-1 font-mono text-[11px] text-slate-400 md:flex">
             <span id="base-url" class="max-w-[220px] truncate lg:max-w-none"></span>
             <button type="button" data-copy-selector="#base-url" title="Copy base URL" aria-label="Copy base URL"
-              class="inline-flex size-6 items-center justify-center rounded text-slate-500 transition-colors hover:bg-slate-800 hover:text-emerald-400">
+              class="inline-flex size-6 items-center justify-center rounded text-slate-500 transition-colors hover:bg-slate-800 hover:text-emerald-300">
               <i data-lucide="copy" class="size-3.5"></i>
             </button>
           </div>
-          <label title="Live data polling for Overview, Logs, Routes, Keys, Storage and Analytics — Models and Providers are never auto-refreshed, so Sync and Health check sweeps always finish uninterrupted. Off by default; always pauses while you type." class="flex cursor-pointer select-none items-center gap-2 rounded-md border border-slate-800 bg-[#000000] px-2.5 py-1">
+          <label title="Live data polling for Overview, Logs, Routes, Keys, Storage and Analytics — Models and Providers are never auto-refreshed, so Sync and Health check sweeps always finish uninterrupted. Off by default; always pauses while you type." class="flex cursor-pointer select-none items-center gap-2 rounded-md border border-slate-800 bg-[#0b0b0b]/80 px-2.5 py-1">
             <span class="relative flex size-2">
-              <span id="ar-ping" class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"></span>
-              <span id="ar-dot" class="relative inline-flex size-2 rounded-full bg-emerald-400"></span>
+              <span id="ar-ping" class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-60"></span>
+              <span id="ar-dot" class="relative inline-flex size-2 rounded-full bg-green-400"></span>
             </span>
             <span class="hidden text-[11px] font-medium text-slate-400 sm:inline">Auto-refresh</span>
             <input id="auto-refresh" type="checkbox" class="peer sr-only" aria-label="Toggle auto-refresh" />
             <span class="relative h-4 w-7 rounded-full bg-slate-700 transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-slate-300 after:transition-transform peer-checked:bg-emerald-500/80 peer-checked:after:translate-x-3"></span>
           </label>
           <button id="refresh-btn" type="button" title="Refresh data now" aria-label="Refresh data now"
-            class="inline-flex size-8 items-center justify-center rounded-md border border-slate-800 bg-[#000000] text-slate-400 transition-colors hover:border-emerald-500/40 hover:text-emerald-400">
+            class="inline-flex size-8 items-center justify-center rounded-md border border-slate-800 bg-[#0b0b0b]/80 text-slate-400 transition-colors hover:border-emerald-500/40 hover:text-emerald-300">
             <i data-lucide="refresh-cw" class="size-4"></i>
           </button>
           <div id="clock" class="hidden w-[70px] text-right font-mono text-xs tabular-nums text-slate-400 lg:block">--:--:--</div>
         </div>
       </header>
-
       {# Ephemeral-database warning (server-rendered once; dismiss stored per browser) #}
       {% if ephemeral_db %}
       <div id="db-banner" class="relative z-10 shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5 md:px-6">
@@ -236,7 +248,7 @@
             <button id="tab-retry" type="button" class="ml-2 underline underline-offset-2">Retry</button>
           </div>
         </div>
-        <div id="tab-content" hx-disinherit="*" hx-get="/partials/tab/overview" hx-trigger="load" hx-swap="innerHTML">
+        <div id="tab-content" hx-disinherit="*" hx-get="/partials/tab/overview" hx-trigger="load" hx-swap="innerHTML" aria-live="off">
           <div class="space-y-4" aria-busy="true">
             <div class="nova-skeleton h-24 rounded-xl"></div>
             <div class="nova-skeleton h-48 rounded-xl"></div>
@@ -246,7 +258,7 @@
       </main>
 
       {# Status footer — sticky, server-rendered live stats #}
-      <footer class="sticky bottom-0 z-20 mt-auto flex h-9 shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-[#000000]/80 px-4 text-[11px] backdrop-blur md:px-6">
+      <footer class="sticky bottom-0 z-20 mt-auto flex h-9 shrink-0 items-center justify-between gap-4 border-t border-slate-800/80 bg-[#050505]/80 px-4 text-[11px] backdrop-blur-xl md:px-6">
         <div id="footer-stats" hx-get="/partials/footer-stats" hx-trigger="load, nova:refresh from:body, nova:auto-refresh from:body" hx-swap="innerHTML"
           class="flex w-full items-center justify-between gap-4 text-[11px]">
           <span class="font-mono text-slate-500">connecting…</span>
@@ -263,5 +275,39 @@
       RouterX needs JavaScript for the interactive console.
     </div>
   </noscript>
+  <!-- Lazy section observer. This lives in <body>, not in a had-swapped
+       fragment, so an HTML-only re-render of a tab can never remove it; it
+       releases every `.nx-reveal` the tab's own scripts (app.js afterSwap,
+       inline tab scripts, HTMX-loaded partials) inserted later. -->
+  <script>
+    (function () {
+      var seq = 'nx-seen-late';
+      function release(el) { el.dataset.nxSeen = '1'; el.classList.add('responded'); }
+      function scan() {
+        var reduce = false;
+        try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
+        var pending = Array.prototype.slice.call(document.querySelectorAll('.nx-reveal:not([data-nx-seen])'));
+        if (!pending.length) return;
+        if (reduce || typeof window.IntersectionObserver !== 'function') { pending.forEach(release); return; }
+        var height = window.innerHeight || 800;
+        pending.forEach(function (el) {
+          if (el.getBoundingClientRect().top < height * 1.1) { release(el); return; }
+          if (el.dataset[seq]) return;
+          el.dataset[seq] = '1';
+          try {
+            new window.IntersectionObserver(function (entries, io) {
+              entries.forEach(function (entry) {
+                if (entry.isIntersecting) { release(entry.target); io.unobserve(entry.target); }
+              });
+            }, { rootMargin: '0px 0px -6% 0px', threshold: 0.04 }).observe(el);
+          } catch (e) { release(el); }
+        });
+      }
+      document.addEventListener('DOMContentLoaded', scan);
+      document.addEventListener('htmx:afterSwap', scan);
+      document.addEventListener('htmx:afterSettle', scan);
+      if (document.readyState !== 'loading') scan();
+    })();
+  </script>
 </body>
 </html>

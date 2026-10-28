@@ -1,20 +1,21 @@
-"""Provider + model catalogue — the OmniRoute registry, ported.
+"""Provider + model catalogue — the RouterX curated registry.
 
-`nova/data/provider_registry.json` holds the routable slice of the OmniRoute
-provider registry (https://github.com/diegosouzapw/OmniRoute): every provider
-that speaks an OpenAI / Anthropic / Gemini wire format, and each of its active
-models with the capabilities OmniRoute declares. Models a vendor has retired or
-started retiring are excluded at generation time.
+`nova/data/provider_registry.json` is RouterX's own curated, hand-maintained
+set of providers: every one speaks an OpenAI / Anthropic / Gemini wire format,
+is keyless or has a usable free tier, and is reachable in practice. Dead and
+unofficial proxy entries are deliberately kept out. Each provider carries its
+active models and the capabilities RouterX declares for them.
 
 This module is read-only and database-free. It backs three things:
 
   • `/v1/models` and the admin catalogue endpoints (what exists at all),
-  • the exposure allow/deny lists (port of `modelExposureList.ts`),
+  • the exposure allow/deny lists,
   • the per-model capability answer the router needs before it dispatches.
 
 Nothing here talks to a network or a Session; `nova.bootstrap` materializes the
-catalogue into `Provider`/`Model` rows additively, and `nova.routing` decides
-which of those rows a request actually uses.
+catalogue into `Provider`/`Model` rows additively, `nova.routing` decides which
+of those rows a request actually uses, and `nova.registry` validates and
+summarises the file itself.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from typing import Any, Iterable
 
 DATA_FILE = Path(__file__).resolve().parent / "data" / "provider_registry.json"
 
-# Formats OmniRoute marks as accepting any model id, passthrough style. RouterX
+# Formats the catalogue marks as accepting any model id, passthrough style. RouterX
 # never dials these blind — they stay in the catalogue, but a request still has
 # to name a model we know about.
 _MODEL_EXPOSURE_MAX_ENTRIES = 500
@@ -98,7 +99,7 @@ def providers() -> list[dict[str, Any]]:
 
 
 def provider(key: str) -> dict[str, Any] | None:
-    """Look a provider up by its OmniRoute key or its upstream id."""
+    """Look a provider up by its catalogue key."""
     needle = (key or "").strip().lower()
     if not needle:
         return None
@@ -247,7 +248,7 @@ def is_exposure_allowed(model_id: str, provider_key: str = "", *,
     Two independent opt-in lists, deny first. An entry is a bare id
     (`gpt-4o`), a provider-prefixed id (`openai/gpt-4o`) or a glob
     (`anthropic/*`). Both empty means "expose everything" — the same default
-    OmniRoute ships, so an untouched deployment keeps its current catalogue.
+    the catalogue ships, so an untouched deployment keeps its current catalogue.
     """
     ids = [i for i in (model_id, f"{provider_key}/{model_id}" if provider_key else "") if i]
     # A bare pattern ("gpt-*") must also match a prefixed id ("openai/gpt-4o"),

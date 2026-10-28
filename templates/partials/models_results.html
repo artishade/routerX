@@ -24,7 +24,7 @@
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {% for m in rows %}
       <div data-detail-id="{{ m.id }}" role="button" tabindex="0" aria-label="Open details for {{ m.display_name }}"
-        class="cursor-pointer rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4 transition hover:border-slate-600 hover:bg-[#0b0b0b] focus:outline-none focus-visible:border-emerald-500/60 {{ 'opacity-60 grayscale' if not m.enabled else '' }}">
+        class="cursor-pointer nx-panel p-4 transition hover:border-slate-600 hover:bg-[#0b0b0b] focus:outline-none focus-visible:border-emerald-500/60 {{ 'opacity-60 grayscale' if not m.enabled else '' }}">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0">
             <p class="truncate text-sm font-medium text-slate-100">{{ m.display_name }}</p>

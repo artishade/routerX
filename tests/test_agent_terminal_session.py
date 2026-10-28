@@ -19,7 +19,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from terminal import pty
 
+# The real interactive terminal is a POSIX feature (`terminal.pty`): these
+# tests open real shells, so they are skipped on a host without a PTY rather
+# than failing on platform. `tests/test_portability.py` pins that contract.
+_POSIX_ONLY = unittest.skipUnless(pty.PTY_SUPPORTED, "interactive PTY sessions need a POSIX host")
 
+
+@_POSIX_ONLY
 class AgentSessionTests(unittest.TestCase):
     def setUp(self):
         pty.manager.close_all()
@@ -133,6 +139,7 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual(pty.agent_session(first.label), first)
 
 
+@_POSIX_ONLY
 class AgentToolRoutingTests(unittest.IsolatedAsyncioTestCase):
     """The agent's tools must prefer the live session and still fall back."""
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 from .link import (
     LinkUnavailable,
     LocalLink,
+    PTYUnsupported,
     RemoteLink,
     SessionGone,
     SessionLimitReached,
@@ -40,6 +41,7 @@ from .link import (
 __all__ = [
     "LinkUnavailable",
     "LocalLink",
+    "PTYUnsupported",
     "RemoteLink",
     "SessionGone",
     "SessionLimitReached",

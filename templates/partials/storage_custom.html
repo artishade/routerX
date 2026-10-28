@@ -1,7 +1,7 @@
 {# Add custom storage provider dialog — port of the Custom Provider Dialog in StorageTab.tsx.
    Context: fields[(name,label,placeholder)], custom_types, sel_type, values, error #}
 <dialog id="st-custom-dialog" aria-label="Add custom storage provider"
-  class="h-fit w-[calc(100%-2rem)] max-w-lg rounded-xl border border-slate-800 bg-[#0b0b0b] p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
+  class="h-fit w-[calc(100%-2rem)] max-w-lg nx-panel p-6 text-slate-200 shadow-2xl backdrop:bg-black/70">
   <form hx-post="/ui/storage/custom-provider" hx-target="#st-custom-zone" hx-swap="innerHTML">
     <h3 class="flex items-center gap-2 text-base font-semibold text-slate-100">
       <i data-lucide="plus" class="size-4 text-emerald-400"></i>Add Custom Storage Provider

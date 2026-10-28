@@ -5,7 +5,7 @@
 </style>
 
 <dialog id="np-add-dialog" aria-labelledby="np-add-title"
-  class="w-[min(92vw,42rem)] rounded-xl border border-slate-800 bg-[#0b0b0b] p-0 text-slate-200">
+  class="w-[min(92vw,42rem)] nx-panel p-0 text-slate-200">
   <form id="np-add-form" autocomplete="off" class="p-5">
     <input type="hidden" name="kind" id="np-kind" value="openai" />
     <h3 id="np-add-title" class="text-base font-semibold text-slate-100">Add provider</h3>
@@ -166,7 +166,7 @@
 </dialog>
 
 <dialog id="np-signin-dialog" aria-labelledby="np-si-title"
-  class="w-[min(92vw,28rem)] rounded-xl border border-slate-800 bg-[#0b0b0b] p-0 text-slate-200">
+  class="w-[min(92vw,28rem)] nx-panel p-0 text-slate-200">
   <form id="np-signin-form" hx-post="/ui/providers/signin" hx-target="#np-si-feedback" hx-swap="innerHTML" autocomplete="off" class="p-5">
     <input type="hidden" name="id" id="np-si-id" value="" />
     <h3 id="np-si-title" class="text-base font-semibold text-slate-100">Sign in to <span id="np-si-name">provider</span></h3>

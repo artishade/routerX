@@ -2,6 +2,7 @@
 
 # dependencies
 node_modules
+__pycache__
 /.pnp
 .pnp.*
 .yarn/*
@@ -65,3 +66,4 @@ __pycache__/
 *.pyc
 .venv/
 .zscripts/dev.pid
+.kilo

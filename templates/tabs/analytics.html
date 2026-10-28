@@ -5,7 +5,7 @@
 <div id="tab-analytics" class="flex flex-col gap-4">
 
   {# Header: range selector + summary chips #}
-  <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4">
+  <div class="nx-panel nx-static flex flex-wrap items-center justify-between gap-3 p-4">
     <div class="flex flex-wrap items-center gap-2">
       {% call chip('border-emerald-500/30 bg-emerald-500/10 text-emerald-300') %}{{ total | default(0) | fmt_num }} requests{% endcall %}
       {% call chip('border-emerald-500/30 bg-emerald-500/10 text-emerald-300') %}{{ summary.total_tokens | default(0) | fmt_num }} tokens{% endcall %}
@@ -38,11 +38,11 @@
   </div>
 
   {# Requests & Errors over time #}
-  <div class="flex flex-col rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4">
+  <div class="flex flex-col nx-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <div>
         <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">Requests &amp; Errors</h2>
-        <p class="mt-0.5 text-[11px] text-slate-600">Per {{ group_by }} bucket, emerald = requests, rose = errors</p>
+        <p class="mt-0.5 text-[11px] text-slate-600">Per {{ group_by }} bucket, accent = requests, rose = errors</p>
       </div>
       {% if series | length == 0 %}
       <span class="font-mono text-[10px] text-slate-600">no data</span>
@@ -83,7 +83,7 @@
   {# Top models + top providers #}
   <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
 
-    <div class="flex flex-col rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4">
+    <div class="flex flex-col nx-panel p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">Top Models</h2>
@@ -108,7 +108,7 @@
       {% endif %}
     </div>
 
-    <div class="flex flex-col rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4">
+    <div class="flex flex-col nx-panel p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">Top Providers</h2>
@@ -136,7 +136,7 @@
   {# Percentiles + donut + cache #}
   <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
-    <div class="flex flex-col rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4">
+    <div class="flex flex-col nx-panel p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">Latency Percentiles</h2>
@@ -156,7 +156,7 @@
       </div>
     </div>
 
-    <div class="flex flex-col rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4">
+    <div class="flex flex-col nx-panel p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">Status Distribution</h2>
@@ -167,7 +167,7 @@
         <svg viewBox="0 0 120 120" class="mx-auto h-full" role="img" aria-label="Status distribution donut">
           <circle cx="60" cy="60" r="48" fill="none" stroke="#262626" stroke-width="14"></circle>
           {% if (donut.total | default(0)) > 0 %}
-          <circle cx="60" cy="60" r="48" fill="none" stroke="#22c55e" stroke-width="14"
+          <circle cx="60" cy="60" r="48" fill="none" stroke="#e8564a" stroke-width="14"
             stroke-dasharray="{{ donut.seg }} {{ donut.rest }}" transform="rotate(-90 60 60)"></circle>
           <circle cx="60" cy="60" r="48" fill="none" stroke="#f43f5e" stroke-width="14"
             stroke-dasharray="{{ donut.rest }} {{ donut.rest }}" stroke-dashoffset="{{ donut.offset }}" transform="rotate(-90 60 60)"></circle>
@@ -188,7 +188,7 @@
       </div>
     </div>
 
-    <div class="flex flex-col rounded-xl border border-slate-800 bg-[#0b0b0b]/80 p-4">
+    <div class="flex flex-col nx-panel p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">Cache Hit Rate</h2>

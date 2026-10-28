@@ -6,14 +6,14 @@ Data-safety contract (the "git push wiped my data" fix):
      never dropped or altered destructively.
   2. An EMPTY database gets the real minimum seeded once: the built-in
      RouterX Free engine (provider + its model catalogue: the `nova/*` tiers plus
-     every free model from ClawLabsAI/free-ai-models), `gateway_started_at`,
+     every model of the bundled RouterX Free catalogue), `gateway_started_at`,
      and the real free-GPU service catalogue. Nothing fake.
   3. A NON-EMPTY database is never cleaned, purged or overwritten — not at
      boot, not after a deploy, not ever. Providers, models, keys, routes,
      configs, logs and files survive every restart and every `git push` (as
      long as DATABASE_URL points at a persistent store). The only writes to an
      existing database are strictly ADD-ONLY: missing SystemConfig keys, missing
-     built-in engine models, and missing rows of the OmniRoute provider/model
+     built-in engine models, and missing rows of the RouterX provider/model
      catalogue are filled in, exactly like an additive schema migration.
      Existing rows are never modified or deleted.
 """
@@ -43,7 +43,7 @@ from .models import (
 log = logging.getLogger("nova.bootstrap")
 
 # The built-in engine's model catalogue: the `nova/*` tiers plus the free
-# models tracked by ClawLabsAI/free-ai-models (engine/free-models.json).
+# models of the bundled free catalogue (engine/free-models.json).
 NOVA_ENGINE_MODELS = nova_engine_models()
 
 # Real free-GPU service catalogue (real providers, real free tiers) — same
@@ -185,7 +185,7 @@ def bootstrap_minimum(db: Session) -> None:
         set_config(db, "gateway_started_at", str(_now_ms()))
 
     # Existing deployments: top up the built-in engine catalogue additively so
-    # the free-ai-models base reaches databases seeded before this change.
+    # the bundled free-model catalogue reaches databases seeded before this change.
     if provider_count != 0:
         provider = db.scalars(select(Provider).where(Provider.key == "novafree")).first()
         if provider is not None:
@@ -197,19 +197,19 @@ def bootstrap_minimum(db: Session) -> None:
     if not db.scalar(select(func.count()).select_from(StorageProviderRow)):
         _seed_gpu_catalogue(db)
 
-    # OmniRoute catalogue: every routable provider + its active models. Strictly
+    # RouterX provider catalogue: every routable provider + its active models. Strictly
     # additive — providers the operator already has keep their own base URL,
     # prefix, priority and colour, and models are only ever inserted, never
     # updated or removed. Seeded providers start disabled: they have no key yet.
     if get_config(db, "seed_registry_models") != "off" and os.environ.get("NOVA_SEED_REGISTRY") != "off":
         seeded = ensure_registry_catalogue(db)
         if seeded["providers"] or seeded["models"]:
-            log.info("OmniRoute catalogue: +%s provider(s), +%s model(s)",
+            log.info("provider catalogue: +%s provider(s), +%s model(s)",
                      seeded["providers"], seeded["models"])
 
 
 def ensure_registry_catalogue(db: Session) -> dict[str, int]:
-    """ADDITIVE-ONLY: materialise the OmniRoute provider/model catalogue.
+    """ADDITIVE-ONLY: materialise the RouterX provider/model catalogue.
 
     Never updates, reorders or deletes an existing row. A provider the operator
     already configured (matching key) is left exactly as it is; only its
@@ -240,6 +240,7 @@ def ensure_registry_catalogue(db: Session) -> dict[str, int]:
                 color=entry.get("color") or "#10b981",
                 requiresAuth=bool(entry.get("requires_key", True)),
                 docsUrl=entry.get("models_url") or None,
+                freeTier=entry.get("free_tier"),
             )
             db.add(provider)
             db.flush()
@@ -255,7 +256,9 @@ def ensure_registry_catalogue(db: Session) -> dict[str, int]:
                 modelId=model["id"],
                 exposedId=f"{prefix}{model['id']}",
                 displayName=model.get("name") or model["id"],
-                isFree=False,  # unpriced until a sync or the operator says otherwise
+                # A ':free' id is an explicit free model; anything else stays
+                # unpriced until a sync or the operator says otherwise.
+                isFree=model["id"].endswith(":free"),
                 contextLength=int(model.get("ctx", 0) or 0),
                 maxOutput=int(model.get("max_out", 0) or 0),
                 capabilities=json.dumps({
@@ -263,7 +266,7 @@ def ensure_registry_catalogue(db: Session) -> dict[str, int]:
                     "vision": bool(model.get("caps", {}).get("vision")),
                     "reasoning": bool(model.get("caps", {}).get("reasoning")),
                 }),
-                description=f"{entry['name']} · from the OmniRoute provider registry",
+                description=f"{entry['name']} · from the provider catalogue",
             ))
             known_models.add((provider.id, model["id"]))
             added_models += 1

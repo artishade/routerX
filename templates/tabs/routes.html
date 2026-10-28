@@ -62,7 +62,7 @@
     {% else %}
       <div class="space-y-3">
         {% for r in routes %}
-        <div class="rounded-xl border bg-[#0b0b0b]/80 p-4 {{ 'border-purple-900/50' if r.public_id == '*' else 'border-slate-800' }}">
+        <div class="nx-panel nx-shine p-4 {{ '!border-purple-900/50' if r.public_id == '*' else '' }} nx-glow">
           <div class="flex flex-wrap items-center gap-2">
             <span class="font-mono text-sm text-emerald-300">{{ r.public_id }}</span>
             {% if r.public_id == '*' %}
