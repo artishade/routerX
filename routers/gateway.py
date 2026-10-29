@@ -1884,8 +1884,15 @@ async def _chat_stream_response(requested: str, messages: list[dict], temperatur
         for row in rows:
             stage += 1
             try:
-                stream, provider_name, upstream_model, key_id = await attempt_upstream_stream(
+                opened = await attempt_upstream_stream(
                     row, messages, temperature, original_body, forward_headers=forward_headers)
+                # `UpstreamStream` still iterates as the historical 3-tuple for
+                # older call sites, so read the identity off its attributes --
+                # unpacking four values here raises ValueError ("expected 4,
+                # got 3"), which used to lock the provider out and fall through
+                # to the free engine on every streaming request.
+                stream, provider_name, upstream_model, key_id = (
+                    opened.iterator, opened.provider_name, opened.upstream_model, opened.key_id)
             except UpstreamFailure as err:
                 note_attempt(row, False, err.detail)
                 await asyncio.to_thread(cooldown_after_failure,

@@ -199,6 +199,58 @@ class ProviderProtocolTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.aclose()
 
+    async def test_chat_stream_commits_to_the_upstream_stream(self):
+        """Regression: `UpstreamStream` iterates as the historical 3-tuple.
+
+        Unpacking four values from it raised `ValueError: not enough values to
+        unpack (expected 4, got 3)`, which locked every streaming provider out
+        and silently demoted /v1/chat/completions to the free engine.
+        """
+        from nova import database as nova_database
+
+        provider = SimpleNamespace(id=1, kind="openai", name="P", key="primary")
+        model_row = SimpleNamespace(exposedId="primary/m", modelId="m", provider=provider)
+        plan = {"strategy": "priority", "candidates": [], "steps": [], "verdict": {}, "direct": True}
+
+        async def relay():
+            yield {"text": "hel", "finish_reason": None, "tool_calls": None}
+            yield {"text": "lo", "finish_reason": "stop", "tool_calls": None}
+
+        async def fake_stream(row, messages, temperature, original_body=None,
+                              forward_headers=None, block=None, key_info=None):
+            return gateway.UpstreamStream(relay(), "P", "m", 7)
+
+        async def engine_must_not_run(*args, **kwargs):
+            raise AssertionError("the free engine was used instead of the upstream stage")
+
+        logged: list[dict] = []
+
+        def capture_log(db, **kwargs):
+            logged.append(kwargs)
+
+        class FakeSession:
+            def close(self):
+                pass
+
+        with patch.object(nova_database, "SessionLocal", lambda: FakeSession()), \
+                patch.object(gateway, "route_request", lambda db, model, body=None: ([model_row], plan)), \
+                patch.object(gateway, "attempt_upstream_stream", fake_stream), \
+                patch.object(gateway, "note_attempt", lambda *a, **k: None), \
+                patch.object(gateway, "persist_lockouts", lambda *a, **k: None), \
+                patch.object(gateway, "write_log", capture_log), \
+                patch.object(gateway, "record_served", lambda *a, **k: None), \
+                patch.object(gateway.nova_auth, "update_usage", lambda *a, **k: None), \
+                patch.object(gateway.nova_engine, "chat_stream", engine_must_not_run):
+            chunks = [chunk async for chunk in gateway._chat_stream_response(
+                "auto", [{"role": "user", "content": "hi"}], None, 0, gateway.now_ms())]
+
+        text = b"".join(chunks).decode("utf-8")
+        self.assertIn('"content": "hel"', text)
+        self.assertIn('"content": "lo"', text)
+        self.assertEqual(logged[-1]["provider_name"], "P")
+        self.assertEqual(logged[-1]["upstream_model"], "m")
+        self.assertEqual(logged[-1]["via"], "upstream")
+
     async def test_discovery_pricing_and_native_endpoint(self):
         self.assertFalse(discovery._from_openai_compatible({"id": "grok-1"}, "xai", 1, "xAI")["is_free"])
         self.assertTrue(discovery._from_openai_compatible({"id": "free-1", "pricing": {"prompt": "0", "completion": "0"}}, "custom", 1, "Custom")["is_free"])

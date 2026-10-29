@@ -132,6 +132,16 @@ python3 main.py             # http://localhost:3000 — UI + API in one process
 2. Set **Health Check Path** to `/health`.
 3. Set `DATABASE_URL` to a free Postgres URL (Neon/Supabase/Aiven) — see below.
 
+> **Render note:** Render puts every service behind its own Cloudflare WAF, which
+> you cannot configure. That WAF sometimes blocks *legitimate* agent traffic
+> whose JSON body contains shell-injection-looking text (for example a tool call
+> that pipes into an interpreter, `... | python -c "..."`). Those requests are
+> answered with a Render HTML `403 - Forbidden` page **before RouterX is
+> reached**, so the gateway cannot log, route or fix them. If you use Claude
+> Code/Desktop as a client, prefer a host where you control the proxy/WAF, or
+> run RouterX locally / behind an SSH tunnel. See the Claude troubleshooting
+> note below.
+
 ### 💾 Keep your data across deploys (important)
 
 Without `DATABASE_URL`, RouterX uses SQLite inside the container, so a redeploy on an ephemeral host resets providers, keys and routes. Point `DATABASE_URL` at a free Postgres instance instead:
@@ -213,6 +223,47 @@ curl $BASE/messages \
   -H "Content-Type: application/json" \
   -d '{"model":"anthropic/claude-3-5-sonnet","max_tokens":256,"messages":[{"role":"user","content":"hi"}]}'
 ```
+
+#### “Credentials rejected … Status: 403” mid-conversation
+
+This banner is Claude’s rendering of **any** 401/403, including a 403 that was
+never produced by RouterX. Check the raw response first:
+
+- RouterX responses are **JSON** and always carry `x-request-id`. A bad or
+  disabled client key is a JSON `401 invalid_api_key`; a model outside the
+  key’s `allowedModels` is a JSON `403 model_not_allowed`.
+- Key cooldowns and lockouts cannot produce this page: they only re-order or
+  skip upstreams inside RouterX. If every stage fails, RouterX answers JSON
+  `502` (or an SSE `error`), which Claude reports as a different error.
+- A response that is **HTML** with a `<title>Blocked</title>` page, a
+  `Request ID:` and “Powered by Render” came from **Render’s Cloudflare WAF**,
+  not from RouterX. It never reaches the app (no `x-request-id`, no
+  `RequestLog` row).
+
+Why it appears mid-conversation and survives Retry/Continue: Claude Code sends
+the whole message history every turn. Render’s WAF flags “pipe into an
+interpreter” command strings as command injection, so one tool call such as
+`baw wallet address --json | python -c "..."` (or any `... | python -c`,
+`... ; python -c`, `... | perl -e`) stays in the history and makes **every
+later request** 403. A fresh conversation works until the same pattern appears
+again; Retry/Continue re-sends the offending history and fails again.
+
+Workarounds, in order of reliability:
+
+1. Point Claude Desktop/Code at a RouterX instance whose edge you control —
+   `http://localhost:3000/v1`, a VPS, or a container host without a
+   body-inspecting WAF. Render’s WAF is not user-configurable (Render feature
+   request: “Let us disable the Cloudflare WAF”).
+2. If you must stay on Render, avoid piping into interpreters in tool
+   commands: use `jq`, `head`, or write a temporary script and run
+   `python script.py` (a bare `python -c` is fine; `| python -c` is not), then
+   start a new conversation — an already-poisoned history cannot be retried
+   through the WAF.
+3. Contact Render support with the WAF page’s `Request ID` and ask them to tune
+   the managed rule for your service.
+
+These are deployment/edge fixes: no RouterX code path can emit that HTML page,
+because the request is rejected before it reaches the app.
 
 ---
 
