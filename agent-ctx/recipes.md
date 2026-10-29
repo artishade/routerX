@@ -117,6 +117,32 @@ then `sh scripts/test.sh`.
    `get_config_number` etc.
 4. UI control → the owning tab module + partial, styled per conventions.
 
+## 11. Add a read-only exchange adapter or trading read
+
+1. Adapter: `nova/trading.py` -- add the exchange branch to `SUPPORTED_EXCHANGES` /
+   `resolve_exchange` and implement normalized `read_quote` / `read_positions` /
+   `read_balances` calls. Raise `TradingError(status, code, message)`; never retry
+   or call a second exchange.
+2. Gate: every read calls `ensure_trading_enabled(db)` before exchange I/O;
+   missing credentials -> `exchange_credentials_missing`. Unknown exchange ->
+   `unsupported_exchange` (501); a venue with no position endpoint ->
+   `positions_unsupported` (501).
+3. HTTP: `routers/trading.py` -- add a GET route behind `gateway_auth`, enforce
+   the matching `trading:*` scope, and resolve one configured `exchange` Provider.
+   Both `/v1` and `/api/v1` prefixes come from `router.include_router(trading_router)`
+   at the bottom of `routers/gateway.py`.
+4. Agent (optional): `nova/agent.py` `ALLOWED_ACTIONS` + executor + prompt line +
+   `routers/agent_api.py` `TOOLS`; call `nova.trading.read_*` with `actor="agent"`
+   and surface `trading_disabled` as a refusal.
+5. Tests: `tests/test_trading_service.py` (adapter; swap the module-level
+   `TRANSPORT = httpx.MockTransport`) and `tests/test_trading_gateway.py` (auth,
+   scopes, kill-switch, typed errors). No network.
+
+```bash
+python -m unittest tests.test_trading_service tests.test_trading_gateway -v
+python3 -m compileall -q main.py nova routers ui terminal
+```
+
 ## Verification checklist (after any recipe)
 
 ```bash

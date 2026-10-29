@@ -316,6 +316,11 @@ async def ping_model(id: str):
         ).first()
         if model is None:
             return not_found("Model not found")
+        if model.provider is not None and model.provider.kind == "exchange":
+            return JSONResponse({
+                "error": "Exchange providers do not serve chat models",
+                "status": "unsupported",
+            }, status_code=400)
 
         provider = model.provider
         keys = db.scalars(

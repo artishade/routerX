@@ -568,7 +568,7 @@ async def attempt_upstream(row: ModelRow, messages: list[dict], temperature: flo
     `upstream_key_id` so usage can be attributed to the key that paid for it.
     """
     provider = row.provider
-    if not provider or not provider.enabled or provider.kind in ("builtin", "gemini"):
+    if not provider or not provider.enabled or provider.kind in ("builtin", "gemini", "exchange"):
         return None
     base = (provider.baseUrl or "").rstrip("/")
     if not base or base.startswith("internal://"):
@@ -864,7 +864,7 @@ async def attempt_upstream_stream(row: ModelRow, messages: list[dict], temperatu
     model on the next key, or fall through to the next stage.
     """
     provider = row.provider
-    if not provider or not provider.enabled or provider.kind in ("builtin", "gemini"):
+    if not provider or not provider.enabled or provider.kind in ("builtin", "gemini", "exchange"):
         raise UpstreamFailure("provider not streamable", provider_id=provider.id if provider else None)
     if key_info is None:
         try:
@@ -1079,8 +1079,9 @@ def auto_standins(db: Session, requested: str, seen: set[str],
         if provider is None or not provider.enabled:
             continue
         # Not reachable through the HTTP upstream path: the free engine is the
-        # pipeline's own final stage, and gemini is not wired for chat here.
-        if provider.kind in ("builtin", "gemini"):
+        # pipeline's own final stage, gemini is not wired for chat here, and an
+        # exchange provider is trading-only with no chat endpoint at all.
+        if provider.kind in ("builtin", "gemini", "exchange"):
             continue
         if not provider.baseUrl or provider.baseUrl.startswith("internal://"):
             continue
@@ -1626,6 +1627,10 @@ async def list_models(request: Request, discover: str = "", provider: str = "", 
         data = []
         for m in rows:
             if m.provider is None or not m.provider.enabled:
+                continue
+            # Exchange providers are trading-only: never advertise a stray
+            # Model row as a chat model, whatever put it in the table.
+            if m.provider.kind == "exchange":
                 continue
             # Exposure allow/deny globs gate advertisement here AND dispatch in
             # nova.routing — one predicate, both chokepoints, so a hidden model
@@ -2402,6 +2407,8 @@ async def embeddings(request: Request, principal=Depends(nova_auth.gateway_auth)
 
 from .anthropic_adapter import router as anthropic_router  # noqa: E402
 from .openai_responses import router as responses_router  # noqa: E402
+from .trading import router as trading_router  # noqa: E402
 
 router.include_router(anthropic_router)
 router.include_router(responses_router)
+router.include_router(trading_router)

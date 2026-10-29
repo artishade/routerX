@@ -63,6 +63,13 @@ async def sync_provider(db: Session, provider: dict, log=None) -> dict:
     started = time.monotonic()
     base = {"provider": provider["key"], "provider_id": provider["id"]}
 
+    # ── Exchange providers: no model catalogue, no discovery, no Model rows ──
+    if provider["kind"] == "exchange":
+        log("exchange provider — no model catalogue to sync (skipped)")
+        return {**base, "ok": True, "discovered": 0, "created": 0, "updated": 0,
+                "skipped": True, "message": "exchange providers do not expose a model catalogue",
+                "duration_ms": _ms(started)}
+
     # ── Built-in engine: catalogue is the engine's real surface, no network ──
     if provider["kind"] == "builtin":
         log("built-in RouterX Free engine — refreshing the engine catalogue (no network)…")

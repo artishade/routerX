@@ -34,6 +34,9 @@ TOOLS = [
     {"id": "gateway_stats", "name": "Gateway Telemetry", "description": "Inspect live gateway stats, models and routes", "icon": "Activity"},
     {"id": "storage_scan", "name": "Storage Scanner", "description": "Scan configured storage providers and files", "icon": "HardDrive"},
     {"id": "discover_models", "name": "Model Discovery", "description": "Discover live models available from every configured provider via /v1/models", "icon": "Radar"},
+    {"id": "trading_quote", "name": "Market Quote", "description": "Read a live bid/ask/last quote from a configured exchange (exchange::symbol)", "icon": "LineChart"},
+    {"id": "trading_positions", "name": "Open Positions", "description": "Read open derivative positions from a configured exchange", "icon": "Coins"},
+    {"id": "trading_balances", "name": "Account Balances", "description": "Read account balances from a configured exchange", "icon": "Wallet"},
 ]
 
 

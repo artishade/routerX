@@ -63,7 +63,7 @@ REQUIRED_CAPS: tuple[str, ...] = ("tools", "vision", "reasoning")
 
 # Kinds `nova.bootstrap` / `nova.discovery` / `routers.gateway` know how to talk
 # to. Anything else would seed a provider row nothing can dispatch.
-KNOWN_KINDS = frozenset({"openai", "anthropic", "gemini", "builtin"})
+KNOWN_KINDS = frozenset({"openai", "anthropic", "gemini", "builtin", "exchange"})
 
 # A base_url whose path ends in one of these is an endpoint, not a root.
 ENDPOINT_SUFFIXES = frozenset(

@@ -57,6 +57,7 @@ def to_client_key(k: ClientKey) -> dict:
         "token": k.token,
         "enabled": k.enabled,
         "allowed_models": k.allowedModels,
+        "trading_scopes": k.tradingScopes or "",
         "rpm_limit": k.rpmLimit,
         "tpd_limit": k.tpdLimit,
         "tokens_in": k.tokensIn,
@@ -90,11 +91,13 @@ def create_client_key(body: dict = Body(default={}), db: Session = Depends(get_d
     token = f"nova-sk-{(uuid.uuid4().hex + uuid.uuid4().hex).replace('-', '')[:32]}"
 
     allowed_models = body.get("allowed_models")
+    trading_scopes = body.get("trading_scopes")
     created = ClientKey(
         name=name,
         token=token,
         allowedModels=allowed_models.strip()
         if isinstance(allowed_models, str) and allowed_models.strip() != "" else "*",
+        tradingScopes=trading_scopes.strip() if isinstance(trading_scopes, str) else "",
         rpmLimit=_num(body.get("rpm_limit"), 60),
         tpdLimit=_num(body.get("tpd_limit"), 0),
     )
@@ -132,6 +135,8 @@ def update_client_key(id: str, body: dict = Body(default={}), db: Session = Depe
             existing.tpdLimit = max(0, round(n))
     if isinstance(body.get("allowed_models"), str) and body["allowed_models"].strip() != "":
         existing.allowedModels = body["allowed_models"].strip()
+    if "trading_scopes" in body and isinstance(body["trading_scopes"], str):
+        existing.tradingScopes = body["trading_scopes"].strip()
 
     db.commit()
 

@@ -296,9 +296,20 @@ def _discover_novafree_sync(db: Session, provider_id: int, provider_name: str) -
     ]
 
 
+def _exchange_result(p: Provider) -> dict:
+    """Exchange providers have no model catalogue: skip them, never GET /models."""
+    return {
+        "provider": p.key, "provider_id": p.id, "ok": False, "count": 0, "models": [],
+        "error": "exchange providers do not expose a model catalogue",
+        "duration_ms": 0, "cached": False,
+    }
+
+
 async def _discover_one(db: Session, p: Provider, api_key: str | None, log=None) -> dict:
     start = time.monotonic()
     try:
+        if p.kind == "exchange":
+            return {**_exchange_result(p), "duration_ms": int((time.monotonic() - start) * 1000)}
         if p.kind == "builtin":
             models = _discover_novafree_sync(db, p.id, p.name)
         elif p.kind == "gemini":
@@ -351,6 +362,9 @@ async def discover_provider_models(db: Session, provider_key: str | None = None)
     providers = _load_providers(db, provider_key)
     results: list[dict] = []
     for p in providers:
+        if p.kind == "exchange":
+            results.append(_exchange_result(p))
+            continue
         needs_key = p.kind != "builtin" and not is_keyless_provider(p.key, p.kind)
         api_key = next((k.apiKey for k in p.keys if k.enabled), None)
         if needs_key and not api_key:
@@ -371,6 +385,8 @@ async def discover_provider_fresh(db: Session, provider_id: int, log=None) -> di
             "count": 0, "models": [], "error": "provider not found",
             "duration_ms": 0, "cached": False,
         }
+    if p.kind == "exchange":
+        return _exchange_result(p)
     needs_key = p.kind != "builtin" and not is_keyless_provider(p.key, p.kind)
     api_key = next((k.apiKey for k in p.keys if k.enabled), None)
     if needs_key and not api_key:

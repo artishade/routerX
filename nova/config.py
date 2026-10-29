@@ -214,6 +214,9 @@ RESPONSE_CACHE_MAX = _env_int("NOVA_RESPONSE_CACHE_MAX", 256)
 # model that served its first turn when the client sends `x-nova-session`.
 SESSION_TTL_S = _env_int("NOVA_SESSION_TTL", 1800)
 
+# Trading exchange reads (nova/trading.py): per-request HTTP read timeout.
+TRADING_TIMEOUT_S = float(os.environ.get("NOVA_TRADING_TIMEOUT", "10") or 10)
+
 
 # --------------------------------------------------------------------------- #
 # Runtime tuning (V8-heap equivalents are kept as gateway config keys)

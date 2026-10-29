@@ -49,7 +49,9 @@ __all__ = [
     "update_usage", "parse_allowed_models", "model_allowed", "RpmCounter",
     "has_enabled_keys", "reset_state", "gateway_auth", "require_client_key",
     "CODE_MISSING_KEY", "CODE_INVALID_KEY", "CODE_MODEL_FORBIDDEN",
-    "CODE_RPM_EXCEEDED", "CODE_TPD_EXCEEDED", "seconds_until_utc_midnight",
+    "CODE_RPM_EXCEEDED", "CODE_TPD_EXCEEDED", "CODE_SCOPE_FORBIDDEN",
+    "TRADING_READ_SCOPES", "parse_scopes", "scope_allowed",
+    "require_trading_scope", "seconds_until_utc_midnight",
 ]
 
 # Stable `error.code` values: clients match on these, not on the prose.
@@ -58,6 +60,14 @@ CODE_INVALID_KEY = "invalid_api_key"
 CODE_MODEL_FORBIDDEN = "model_not_allowed"
 CODE_RPM_EXCEEDED = "rate_limit_exceeded"
 CODE_TPD_EXCEEDED = "token_budget_exceeded"
+CODE_SCOPE_FORBIDDEN = "scope_not_allowed"
+
+# Scopes that cover the read-only trading namespace. `trading:read` is the
+# umbrella scope: a key holding it may call every read endpoint, while the
+# narrower scopes gate exactly one endpoint each.
+TRADING_READ_SCOPES = (
+    "trading:read", "trading:quote", "trading:positions", "trading:balances",
+)
 
 
 class AuthError(Exception):
@@ -126,6 +136,53 @@ def model_allowed(allowed: list[str], model: str) -> bool:
         if pattern == "*" or glob_match(pattern, model):
             return True
     return False
+
+
+# --------------------------------------------------------------------------- #
+# Trading scopes
+# --------------------------------------------------------------------------- #
+
+def parse_scopes(raw: str | None) -> list[str]:
+    """`"trading:read, trading:quote"` -> the two scopes (same list syntax)."""
+    return parse_allowed_models(raw)
+
+
+def scope_allowed(allowed: list[str], scope: str) -> bool:
+    """True when `scope` is granted. FAIL-CLOSED: an empty list grants nothing.
+
+    Exact matches, `*`, a namespace wildcard (`trading:*`) and glob patterns
+    (`trading:*`, `trading:quo*`, ...) are accepted.
+    """
+    if not allowed:
+        return False
+    for pattern in allowed:
+        if not pattern:
+            continue
+        if pattern == "*" or pattern == scope or glob_match(pattern, scope):
+            return True
+        if pattern.endswith(":*") and scope.startswith(pattern[:-1]):
+            return True
+    return False
+
+
+def require_trading_scope(principal: object, scope: str) -> None:
+    """Enforce an explicit client key plus its trading scopes.
+
+    Trading never inherits the anonymous/text fail-open rule: a request without
+    a resolved `ClientKey` is refused with 401, and a key whose `tradingScopes`
+    do not cover `scope` (or the `trading:read` umbrella) is refused with 403.
+    """
+    key = getattr(principal, "key", None)
+    if key is None:
+        raise AuthError(401, CODE_MISSING_KEY,
+                        "An API key is required for trading endpoints.")
+    allowed = parse_scopes(getattr(key, "tradingScopes", "") or "")
+    if scope_allowed(allowed, scope) or scope_allowed(allowed, "trading:read"):
+        return
+    raise AuthError(
+        403, CODE_SCOPE_FORBIDDEN,
+        f"This API key is not allowed to use trading scope '{scope}'.",
+    )
 
 
 # --------------------------------------------------------------------------- #

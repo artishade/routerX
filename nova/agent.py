@@ -85,6 +85,9 @@ ALLOWED_ACTIONS = {
     "mkdir",
     "bash_exec",
     "mcp_call",
+    "trading_quote",
+    "trading_positions",
+    "trading_balances",
     "finish",
 }
 
@@ -103,6 +106,9 @@ TOOLS_DOC = {
     "mkdir": "Create a directory",
     "bash_exec": "Run a real shell command in the cloud workspace",
     "mcp_call": "Call a tool exposed by a registered MCP server (plugin): server::tool",
+    "trading_quote": "Read a live bid/ask/last quote from a configured exchange (argument: exchange::symbol or symbol)",
+    "trading_positions": "Read open derivative positions from a configured exchange (argument: optional exchange key)",
+    "trading_balances": "Read account balances from a configured exchange (argument: optional exchange key)",
     "finish": "End the task with a final summary",
 }
 
@@ -121,10 +127,13 @@ You work toward the user's goal one step at a time using these tools:
 - mkdir: CREATE a directory. query_or_url_or_command = "<path>"
 - bash_exec: RUN a real shell command (bun, npm, pip, python3, build). query_or_url_or_command = "<shell command>" (e.g. "bun install && bun run build")
 - mcp_call: CALL a tool from one of the MCP servers (plugins) the user registered — see the "# Available MCP tools" section of the request. query_or_url_or_command = "server_id::tool_name" followed by an optional JSON object of arguments, e.g. 'deepwiki::ask_wiki {"repo":"fastapi/fastapi"}'
+- trading_quote: READ-ONLY live bid/ask/last quote from a configured exchange. query_or_url_or_command = "exchange::symbol" (e.g. "binance::BTC/USDT") or just "symbol" when only one exchange is available
+- trading_positions: READ-ONLY open derivative positions from a configured exchange. query_or_url_or_command = optional exchange key (e.g. "binance"); leave empty to use the only configured exchange
+- trading_balances: READ-ONLY account balances from a configured exchange. query_or_url_or_command = optional exchange key (e.g. "binance"); leave empty to use the only configured exchange
 - finish: the goal is achieved ("query_or_url_or_command" = final key takeaway, optional)
 
 STRICT OUTPUT RULE — respond with JSON only, no prose, no markdown fences, exactly this shape:
-{"action": "web_search|read_url|terminal|gateway_stats|storage_scan|discover_models|mcp_call|finish", "title": "short title", "query_or_url_or_command": "...", "reason": "why this step"}
+{"action": "web_search|read_url|terminal|gateway_stats|storage_scan|discover_models|mcp_call|trading_quote|trading_positions|trading_balances|finish", "title": "short title", "query_or_url_or_command": "...", "reason": "why this step"}
 
 Rules:
 1. Exactly one action per response.
@@ -722,6 +731,119 @@ async def tool_discover_models(query: str) -> str:
         return f"Model discovery failed: {err}"
 
 
+def _trading_split(arg: str) -> tuple[str | None, str]:
+    text = (arg or "").strip()
+    if "::" in text:
+        exchange, rest = text.split("::", 1)
+        return exchange.strip() or None, rest.strip()
+    return None, text
+
+
+def _fmt_amount(value) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+async def tool_trading_quote(argument: str) -> str:
+    try:
+        from . import trading  # noqa: PLC0415 - lazy by design
+    except Exception as err:
+        return f"trading_quote failed: {err.__class__.__name__}: {err}"
+
+    exchange, symbol = _trading_split(argument)
+    if not symbol:
+        return "trading_quote error: use 'exchange::symbol' (e.g. binance::BTC/USDT)"
+    try:
+        with SessionLocal() as db:
+            quote = await trading.read_quote(
+                db, symbol=symbol, exchange=exchange, actor="agent"
+            )
+    except trading.TradingError as err:
+        return f"trading_quote refused: {err.code} — {err.message}"
+    except Exception as err:
+        return f"trading_quote failed: {err.__class__.__name__}: {err}"
+    data = quote if isinstance(quote, dict) else {}
+    symbol_out = data.get("symbol") or symbol
+    exchange_out = data.get("exchange") or exchange or "auto"
+    return "\n".join([
+        f"{symbol_out} on {exchange_out}",
+        f"bid: {_fmt_amount(data.get('bid'))} · ask: {_fmt_amount(data.get('ask'))} · last: {_fmt_amount(data.get('last'))}",
+        f"as of {data.get('ts') or 'unknown'}",
+    ])
+
+
+async def tool_trading_positions(argument: str) -> str:
+    try:
+        from . import trading  # noqa: PLC0415 - lazy by design
+    except Exception as err:
+        return f"trading_positions failed: {err.__class__.__name__}: {err}"
+
+    exchange, rest = _trading_split(argument)
+    if exchange is None and rest:
+        exchange = rest
+    try:
+        with SessionLocal() as db:
+            result = await trading.read_positions(db, exchange=exchange, actor="agent")
+    except trading.TradingError as err:
+        return f"trading_positions refused: {err.code} — {err.message}"
+    except Exception as err:
+        return f"trading_positions failed: {err.__class__.__name__}: {err}"
+    data = result if isinstance(result, dict) else {}
+    exchange_out = data.get("exchange") or exchange or "auto"
+    lines = [f"Open positions on {exchange_out} (as of {data.get('as_of') or 'unknown'}):"]
+    rows = data.get("positions") if isinstance(data.get("positions"), list) else []
+    if not rows:
+        lines.append("(no open positions)")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"· {row.get('symbol')} {row.get('side')} · quantity {_fmt_amount(row.get('quantity'))}"
+            f" · entry_price {_fmt_amount(row.get('entry_price'))}"
+            f" · mark_price {_fmt_amount(row.get('mark_price'))}"
+            f" · unrealized_pnl {_fmt_amount(row.get('unrealized_pnl'))}"
+            f" · leverage {_fmt_amount(row.get('leverage'))}"
+        )
+    return "\n".join(lines)
+
+
+async def tool_trading_balances(argument: str) -> str:
+    try:
+        from . import trading  # noqa: PLC0415 - lazy by design
+    except Exception as err:
+        return f"trading_balances failed: {err.__class__.__name__}: {err}"
+
+    exchange, rest = _trading_split(argument)
+    if exchange is None and rest:
+        exchange = rest
+    try:
+        with SessionLocal() as db:
+            result = await trading.read_balances(db, exchange=exchange, actor="agent")
+    except trading.TradingError as err:
+        return f"trading_balances refused: {err.code} — {err.message}"
+    except Exception as err:
+        return f"trading_balances failed: {err.__class__.__name__}: {err}"
+    data = result if isinstance(result, dict) else {}
+    exchange_out = data.get("exchange") or exchange or "auto"
+    lines = [f"Balances on {exchange_out} (as of {data.get('as_of') or 'unknown'}):"]
+    rows = data.get("balances") if isinstance(data.get("balances"), list) else []
+    if not rows:
+        lines.append("(no non-zero balances)")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"· {row.get('asset')} free {_fmt_amount(row.get('free'))}"
+            f" · locked {_fmt_amount(row.get('locked'))}"
+            f" · total {_fmt_amount(row.get('total'))}"
+        )
+    return "\n".join(lines)
+
+
 async def execute_tool(plan: AgentPlan) -> str:
     if plan.action == "web_search":
         return await tool_web_search(plan.query)
@@ -747,6 +869,12 @@ async def execute_tool(plan: AgentPlan) -> str:
         return await tool_bash_exec(plan.query)
     if plan.action == "mcp_call":
         return await tool_mcp_call(plan.query)
+    if plan.action == "trading_quote":
+        return await tool_trading_quote(plan.query)
+    if plan.action == "trading_positions":
+        return await tool_trading_positions(plan.query)
+    if plan.action == "trading_balances":
+        return await tool_trading_balances(plan.query)
     raise ValueError(f"Unknown action: {plan.action}")
 
 

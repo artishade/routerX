@@ -147,3 +147,24 @@ Rules that keep changes consistent. Break these only with a documented reason
 37. Additive-only schema changes; new deploys must never wipe user data
     (that's why Postgres `DATABASE_URL` is recommended and SQLite is flagged
     as ephemeral in `/health`).
+
+## Trading invariants (Phase 1 is read-only; keep these)
+
+38. **Trading is a terminal stage.** Never route a trading read (or a future
+    order) through `nova/routing.py`, the fallback chain, auto stand-ins, or a
+    retry across exchanges. One request resolves exactly one configured
+    exchange; a failure is a typed decision.
+39. **Kill-switch first.** Every trading entry point (gateway, agent tool,
+    future console) calls `nova.trading.ensure_trading_enabled` before any
+    exchange I/O; when halted it raises the typed `trading_disabled` (503).
+40. **Audit is append-only.** Every trading decision writes a `TradeAuditLog`
+    row via `nova/trading_audit.py`; ORM UPDATE/DELETE raise
+    `TradeAuditImmutable` and no update/delete API exists.
+41. **Trading scopes are fail-closed.** Trading requires an explicit
+    `ClientKey` even on a fail-open text install; `tradingScopes` defaults to
+    `""` and grants nothing. Exact scopes, `*`, `trading:*` and globs match;
+    `trading:read` is the umbrella over the per-read scopes.
+42. **`exchange` is trading-only.** The provider kind is excluded from chat,
+    discovery, sync, `/v1/models`, auto stand-ins and admin model paths;
+    Provider Test is configuration-only. Phase 1 is read-only -- no order
+    create/update/submit endpoint or agent action exists.

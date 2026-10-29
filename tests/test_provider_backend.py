@@ -27,11 +27,18 @@ class ProviderProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(presets["xai"]["kind"], "openai")
         self.assertEqual(presets["cloudflare-worker"]["kind"], "openai")
         self.assertEqual(presets["custom-gateway"]["kind"], "openai")
+        self.assertEqual(presets["custom-exchange"]["kind"], "exchange")
+        self.assertEqual(presets["custom-exchange"]["prefix"], "exchange/")
+        self.assertIsNone(validate_base_url("https://api.binance.com", "exchange"))
         self.assertIsNone(validate_base_url("https://example.workers.dev/v1", "openai"))
         self.assertIsNone(validate_base_url("http://localhost:11434/v1", "openai"))
         for url in ("", "ftp://host/v1", "https://user:pass@example.org/v1", "https://example.org/v1?token=secret",
                     "https://example.org/v1/chat/completions"):
             self.assertIsNotNone(validate_base_url(url, "openai"), url)
+        for url in ("https://api.binance.com/api/v3/quote", "https://api.binance.com/api/v3/positions",
+                    "https://api.binance.com/api/v3/balances", "https://api.binance.com/api/v3/ticker",
+                    "https://api.binance.com/api/v3/models"):
+            self.assertIsNotNone(validate_base_url(url, "exchange"), url)
 
     def test_anthropic_tool_roundtrip(self):
         messages = [{"role": "system", "content": "Act safely"},

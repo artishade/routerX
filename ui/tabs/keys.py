@@ -116,11 +116,12 @@ async def keys_create(request: Request) -> JSONResponse:
         return JSONResponse({"error": "TPD limit must be a non-negative number (0 = unlimited)"}, status_code=400)
 
     allowed = str(form.get("allowed_models") or "").strip() or "*"
+    scopes = str(form.get("trading_scopes") or "").strip()
 
     try:
         created = await api.post(
             "/api/admin/client-keys",
-            json={"name": name, "allowed_models": allowed, "rpm_limit": rpm, "tpd_limit": tpd},
+            json={"name": name, "allowed_models": allowed, "trading_scopes": scopes, "rpm_limit": rpm, "tpd_limit": tpd},
         )
     except ApiError as err:
         return JSONResponse({"error": err.message}, status_code=err.status if err.status >= 400 else 500)
@@ -148,6 +149,8 @@ async def keys_update(key_id: str, request: Request) -> JSONResponse:
     allowed = str(form.get("allowed_models") or "").strip()
     if allowed:
         body["allowed_models"] = allowed
+    if "trading_scopes" in form:
+        body["trading_scopes"] = str(form.get("trading_scopes") or "").strip()
     rpm = _num_field(form.get("rpm_limit"), "rpm")
     if rpm is not None:
         body["rpm_limit"] = rpm

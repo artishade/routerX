@@ -1,5 +1,6 @@
 {# Client key card — KeysTab.tsx card layout (badge row, token row, usage row, budget bar). #}
 {% set pct = ([100, ((k.tokens_out / k.tpd_limit * 100) | round(0, 'common') | int)] | min) if k.tpd_limit and k.tpd_limit > 0 else 0 %}
+{% set scopes = k.trading_scopes or '' %}
 <div class="keys-card nx-panel p-4" data-key-id="{{ k.id }}">
   <div class="flex flex-wrap items-center gap-2">
     <i data-lucide="key-round" class="size-4 text-emerald-400"></i>
@@ -10,8 +11,13 @@
     <span class="inline-flex items-center rounded-full border border-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
       {{ 'all models' if k.allowed_models == '*' else k.allowed_models }}
     </span>
+    {% if scopes %}
+    <span class="inline-flex items-center rounded-full border border-slate-700 bg-slate-800/40 px-1.5 py-0.5 font-mono text-[10px] text-slate-300" title="Trading scopes granted to this key">{{ scopes }}</span>
+    {% else %}
+    <span class="inline-flex items-center rounded-full border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-500" title="No trading access: this key cannot use /v1/trading/*">no trading</span>
+    {% endif %}
     <div class="ml-auto flex items-center gap-2">
-      <button type="button" data-keys-edit data-key-id="{{ k.id }}" data-key-name="{{ k.name }}" data-key-models="{{ k.allowed_models }}"
+      <button type="button" data-keys-edit data-key-id="{{ k.id }}" data-key-name="{{ k.name }}" data-key-models="{{ k.allowed_models }}" data-key-scopes="{{ scopes }}"
         data-key-rpm="{{ k.rpm_limit }}" data-key-tpd="{{ k.tpd_limit }}" title="Edit limits" aria-label="Edit limits for key {{ k.name }}"
         class="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:text-slate-200">
         <i data-lucide="pencil" class="size-3.5"></i>

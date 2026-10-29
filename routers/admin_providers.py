@@ -41,7 +41,7 @@ FETCH_TIMEOUT_S = 8.0
 FETCH_TIMEOUT_MS = 8000
 ENGINE_PING_TIMEOUT_S = 20.0
 KEYLESS_PROVIDERS = {"openrouter", "ollama"}
-PROVIDER_KINDS = {"openai", "anthropic", "gemini", "builtin"}
+PROVIDER_KINDS = {"openai", "anthropic", "gemini", "builtin", "exchange"}
 
 
 def validate_base_url(url: str, kind: str) -> str | None:
@@ -54,7 +54,10 @@ def validate_base_url(url: str, kind: str) -> str | None:
                 parts.username is not None or parts.password is not None or
                 parts.query or parts.fragment or any(c.isspace() for c in url)):
             return "Provide an HTTP(S) API base URL without credentials, query parameters or fragments"
-        if parts.path.rstrip("/").endswith(("/models", "/chat/completions", "/messages", "/embeddings")):
+        suffixes = ("/models", "/chat/completions", "/messages", "/embeddings")
+        if kind == "exchange":
+            suffixes += ("/quote", "/positions", "/balances", "/ticker")
+        if parts.path.rstrip("/").endswith(suffixes):
             return "Provide the API base URL, not a specific endpoint"
     except ValueError:
         return "Invalid API base URL"
@@ -168,6 +171,12 @@ PRESETS: list[dict] = [
         "base_url": "", "prefix": "gateway/", "key_hint": "Gateway API key",
         "free_tier": None, "docs_url": None, "auth_url": None,
         "requires_signin": False, "color": "#38bdf8", "priority": 95,
+    },
+    {
+        "key": "custom-exchange", "name": "Exchange (read-only)", "kind": "exchange",
+        "base_url": "", "prefix": "exchange/", "key_hint": "API key + secret (JSON or key:secret)",
+        "free_tier": None, "docs_url": None, "auth_url": None,
+        "requires_signin": False, "color": "#f59e0b", "priority": 95,
     },
     {
         "key": "cloudflare-worker", "name": "Cloudflare Worker (OpenAI-compatible)", "kind": "openai",
@@ -461,6 +470,15 @@ async def create_provider(req: Request):
             ])
         db.commit()
 
+        # Exchange providers have no model catalogue: never run discovery for them.
+        if created.kind == "exchange":
+            return JSONResponse({
+                "id": created.id,
+                "keys_added": len(keys),
+                "models_added": 0,
+                "sync_skipped": "exchange providers do not expose a model catalogue",
+            }, status_code=200)
+
         # Auto-sync the new provider's live model catalogue so it is usable immediately.
         # Best-effort: a discovery failure must not fail the creation — the dashboard
         # "Sync models" button can retry, and the error is surfaced honestly.
@@ -579,6 +597,13 @@ async def probe_upstream(provider_key: str, kind: str, base_url: str, api_key: s
     from urllib.parse import quote
 
     started = time.monotonic()
+    if kind == "exchange":
+        # Exchange credentials are verified through the trading namespace, not a
+        # model catalogue: never probe {base}/models for a read-only exchange.
+        return {
+            "ok": True, "http_status": 0, "latency_ms": 0, "models_found": 0,
+            "detail": "Exchange provider configured — verify read access with /v1/trading/quote",
+        }
     url = _join_url(base_url, "models")
     headers: dict[str, str] = {"Accept": "application/json"}
 
@@ -711,6 +736,17 @@ async def test_provider(id: str):
                 "status": "misconfigured",
                 "models_found": 0,
                 "message": "Provider has no upstream base URL configured — edit it before testing",
+            })
+
+        if provider.kind == "exchange":
+            return JSONResponse({
+                "ok": True,
+                "provider": provider.key,
+                "key_count": len(enabled_keys),
+                "latency_ms": 0,
+                "status": "ok",
+                "models_found": 0,
+                "message": "Exchange provider configured — no model catalogue is probed; verify read access with /v1/trading/quote",
             })
 
         if not enabled_keys and provider.key not in KEYLESS_PROVIDERS:

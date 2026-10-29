@@ -2,7 +2,7 @@
 
 **One endpoint in front of every AI provider — with automatic failover that actually uses the providers you configured.**
 
-RouterX is a self-hosted, OpenAI- and Anthropic-compatible AI gateway. Point your SDKs (or **Claude Code**) at one base URL and RouterX fans every request out across the providers you've added, walks a fallback chain when one fails, keeps a per-provider key pool with cooldowns, and finally falls back to **RouterX Free** — a zero-key free-model engine so the gateway never leaves a request unanswered. It ships with a 10-tab dashboard, a chat console, and a real cloud terminal with an autonomous agent.
+RouterX is a self-hosted, OpenAI- and Anthropic-compatible AI gateway. Point your SDKs (or **Claude Code**) at one base URL and RouterX fans every request out across the providers you've added, walks a fallback chain when one fails, keeps a per-provider key pool with cooldowns, and finally falls back to **RouterX Free** — a zero-key free-model engine so the gateway never leaves a request unanswered. It ships with an 11-tab dashboard, a chat console, and a real cloud terminal with an autonomous agent.
 
 ![stack](https://img.shields.io/badge/Python-FastAPI-009688) ![stack](https://img.shields.io/badge/SQLAlchemy-2-orange) ![stack](https://img.shields.io/badge/UI-Jinja2%20%2B%20HTMX-dc2626) ![stack](https://img.shields.io/badge/Claude%20Code-ready-8b5cf6) ![license](https://img.shields.io/badge/license-MIT-blue)
 
@@ -87,6 +87,7 @@ A request is ordered by a pure function (`nova/routing.py`) and then executed as
 | ⚡ **Opt-in response cache** | Content-addressed TTL + LRU cache for non-streaming completions. Off by default; never caches streaming or tool-call responses. |
 | 🔎 **Searchable route builder** | Build a fallback chain by searching the whole catalogue (`/ui/routes/models`) and clicking models in order — plus a 3-stage resolution **preview** that matches runtime exactly. |
 | 🧠 **Free models, no key** | Built-in **RouterX Free** engine + convenience tiers (`routerx/pro`, `routerx/air`, `routerx/mini`). |
+| **Trading foundation (read-only)** | `exchange` providers add a separate trading namespace: normalized quotes, positions and balances under `/v1/trading/*` (also `/api/v1/*`), per-client-key trading scopes, a global kill-switch and an append-only audit log. Read-only adapters today: Binance and Coinbase Exchange. **No order execution.** |
 | 🔌 **MCP plugins** | Register your own MCP servers (streamable HTTP or local stdio); their tools join the agent's toolbox and a built-in "run this tool" form. |
 | 🗂️ **Curated catalogue** | 19 providers / 86 models, 4 of them keyless, seeded on first boot and extendable with live discovery. |
 | 🔑 **Key management** | Multi-key pools per provider, bulk import, weights, cooldown tracking, client keys for the gateway. |
@@ -176,6 +177,12 @@ The app is Python; the `package.json` scripts are thin `sh`/`python3` wrappers, 
 | Curated registry + validator | `nova/registry.py` | `validate()` / `summary()` / `is_keyless()` / `registry_models_for_engine()`; `base_url` is always an API root. |
 | Playground tab | `ui/tabs/playground.py` | Sends a chat completion through this gateway and shows the honest `_nova` metadata it comes back with. |
 | Dark AI World UI layer | `static/nova-world.css` | Animated aurora background, reveal-on-scroll, hover glow; all motion off under `prefers-reduced-motion`. |
+| Exchange provider kind + trading schema | `nova/registry.py`, `nova/models.py` | `exchange` kind; additive `TradeOrder`, `TradeFill`, `RiskPolicy`, `TradeAuditLog` (bootstrap `create_all`, no destructive migration); audit is append-only. Providers of this kind are excluded from every chat/model path and Test is configuration-only. |
+| Read-only trading API | `routers/trading.py`, `nova/trading.py` | `GET /v1/trading/quote`, `/positions`, `/balances` (also `/api/v1/*`); Binance + Coinbase Exchange adapters; typed `trading_error`s; no fallback across exchanges. |
+| Trading scopes on client keys | `nova/auth.py`, Keys UI | `tradingScopes` (wire `trading_scopes`); empty = no trading access; `trading:read` umbrella plus `trading:quote` / `:positions` / `:balances`. |
+| Agent trading read tools | `nova/agent.py`, `routers/agent_api.py` | `trading_quote`, `trading_positions`, `trading_balances` call `nova.trading.read_*`; no order tool exists. |
+| Trading kill-switch + audit | Providers tab, `routers/admin_trading.py` | Live armed/halted pill and engage/release button; `GET`/`POST /api/admin/trading`, read-only `GET /api/admin/trading/audit`. |
+| Exchange read timeout | `nova/config.py` | `NOVA_TRADING_TIMEOUT` (default `10` seconds) bounds trading reads. |
 
 ---
 
@@ -333,6 +340,44 @@ curl $BASE/embeddings -H 'Content-Type: application/json' \
 
 All endpoints exist under both `/v1/*` and `/api/v1/*`. Chat-style responses carry `_nova` metadata (upstream provider, stage, fallback state, routing decision, and TTFT where known). `POST /v1/responses` answers in the OpenAI Responses shape (`object: "response"`, `output[].content[].text`) and streams `response.created`, `response.output_text.delta`, `response.completed`, or `response.failed`. CORS is enabled by default. Admin APIs live under `/api/admin/*`; agent APIs under `/api/agent/*`.
 
+### Read-only trading
+
+Trading is a separate, terminal namespace: **one configured `exchange` provider per read, with no retry and no fallback across exchanges.** Reads are served under both `/v1/trading/*` and `/api/v1/trading/*`.
+
+Every trading gateway read requires a `ClientKey` -- anonymous access is refused even on a fail-open text install (`401 missing_api_key`). The key must carry the endpoint scope (`trading:quote`, `trading:positions`, `trading:balances`, or the `trading:read` umbrella); exact names, `*`, `trading:*` and globs match. The default `tradingScopes` is empty, so existing keys gain no trading access.
+
+```bash
+KEY=nova-sk-...
+curl -s "$BASE/trading/quote?symbol=BTC/USDT" -H "Authorization: Bearer $KEY"
+curl -s "$BASE/trading/quote?symbol=BTC/USDT&exchange=binance" -H "Authorization: Bearer $KEY"
+curl -s "$BASE/trading/positions?exchange=binance" -H "Authorization: Bearer $KEY"
+curl -s "$BASE/trading/balances?exchange=coinbase" -H "Authorization: Bearer $KEY"
+```
+
+Success uses the gateway envelope, with `stage: 1` and `fallback: false`:
+
+```json
+{"object":"trading.quote","data":{"exchange":"binance","symbol":"BTC/USDT","base_asset":"BTC","quote_asset":"USDT","bid":123.45,"ask":123.46,"last":123.45,"ts":"2026-10-29T12:00:00Z","source":"..."},"_nova":{"exchange":"binance","provider":"...","fallback":false,"cached":false,"stage":1}}
+```
+
+Normalized shapes: quote `{exchange,symbol,base_asset,quote_asset,bid,ask,last,ts,source}`; positions `{exchange,as_of,positions:[{symbol,side,quantity,entry_price,mark_price,unrealized_pnl,leverage}]}`; balances `{exchange,as_of,balances:[{asset,free,locked,total}]}` (zero totals are filtered). Errors are `{"error":{"message":"...","type":"trading_error","code":"..."}}` with `retry_after` and other extras at the top level; codes include `trading_disabled` (503), `exchange_not_configured` (503), `exchange_not_found` (404), `exchange_disabled` (503), `exchange_required` (400), `unsupported_exchange` (501), `positions_unsupported` (501), `exchange_credentials_missing` (503), `invalid_symbol` (400), `exchange_timeout` (504), `exchange_auth_failed` / `exchange_unreachable` / `exchange_error` / `exchange_bad_response` (502), `exchange_rate_limited` (503), `exchange_rejected` (400) and `trading_internal_error` (502).
+
+Adapters: **Binance** uses `/api/v3/ticker/24hr` for spot quotes (or `/fapi/v1/ticker/24hr` on a futures root), signed spot balances and signed futures positions via `/fapi/v2/positionRisk`; spot positions return `501 positions_unsupported`. **Coinbase Exchange** uses `/products/{BASE}-{QUOTE}/ticker` for quotes, signed `/accounts` for balances and returns `501 positions_unsupported`. Any other exchange is `501 unsupported_exchange`. Exactly one provider serves a read; a failure is a typed decision, never a retry on another exchange.
+
+Exchange credentials live on the provider's `apiKey` as JSON `{"api_key":"...","api_secret":"...","passphrase":"..."}` (aliases accepted) or compact `key:secret`; Coinbase requires `passphrase`. Secrets are **plaintext** until Phase 5 encryption lands. `exchange` providers are excluded from chat, discovery, sync, `/v1/models` and admin model paths, and Provider **Test** only checks configuration rather than probing the exchange.
+
+Admin kill-switch and audit (the Providers tab shows a live **Trading armed/halted** pill with engage/release):
+
+```bash
+curl -s localhost:3000/api/admin/trading
+curl -s -X POST localhost:3000/api/admin/trading -H 'content-type: application/json' -d '{"kill_switch":true}'
+curl -s "localhost:3000/api/admin/trading/audit?limit=50"
+```
+
+The audit endpoint is read-only: there is no update or delete route.
+
+> **No order execution yet.** These endpoints are read-only. Phase 2 (paper/sandbox execution) and live orders are not built; nothing creates, signs, submits or relays an order.
+
 ### Observability and admin surfaces
 
 ```bash
@@ -438,6 +483,7 @@ Key environment variables (see `.env.example`):
 | `NOVA_AUTO_STANDINS` | `6` | Max auto stand-in providers appended to a chain |
 | `NOVA_CONNECT_TIMEOUT` | `5` | Upstream connect timeout (seconds) |
 | `NOVA_NONSTREAM_READ_TIMEOUT` | `300` | Read timeout for non-streaming upstream calls |
+| `NOVA_TRADING_TIMEOUT` | `10` | Exchange read timeout for trading quotes, positions and balances (seconds) |
 | `NOVA_SEED_REGISTRY` | `on` | Seed the curated catalogue on boot (`off` skips it) |
 | `NOVA_REQUIRE_API_KEY` | off | Refuse anonymous gateway requests even when no client keys exist |
 | `NOVA_DEFAULT_RPM` / `_TPM` / `_RPD` / `_TPD` | `0` (unlimited) | Per-(provider, model) request / token caps |
@@ -463,18 +509,22 @@ Key environment variables (see `.env.example`):
 
 ### ⚠️ Status and risk
 
-**None of the phases below are implemented yet** — they are the plan, in order. **Phase 3 and later are explicitly not built** and nothing trading-related exists in the codebase. Nothing in this repository executes, signs or relays an order today. When live execution ships, it carries **real financial risk**: an LLM can be wrong, a market can gap, and an order cannot be un-sent. Every phase below is a precondition for the next, and the kill-switch in Phase 0 gates all of it.
+**Phase 0 and Phase 1 are implemented; Phase 2 and later are not built.** Trading today is **read-only**: quotes, positions and balances from one configured exchange, with a kill-switch, append-only audit and client-key scopes. **Nothing in this repository executes, signs or relays an order today.** When live execution ships, it carries **real financial risk**: an LLM can be wrong, a market can gap, and an order cannot be un-sent. Every phase below is a precondition for the next, and the kill-switch landed in Phase 0 gates all of it.
 
-### Phase 0 — Foundations: risk, audit, kill-switch
+### Phase 0 — Foundations: risk schema, audit, kill-switch *(implemented)*
+
+Landed: the `exchange` provider kind; `TradeOrder`, `TradeFill`, `RiskPolicy` and `TradeAuditLog` tables (additive); an append-only audit; and a global kill-switch that refuses every trading entry point with `trading_disabled`.
 
 - An `exchange` provider **kind** alongside `openai` / `anthropic` / `gemini`, registered in `nova/registry.py` and the provider kinds table.
-- Additive schema: `TradeOrder`, `TradeFill` and `RiskPolicy` rows in `nova/models.py` (bootstrap adds them; no destructive migration).
-- An append-only trade audit log: every intent, refusal, submission and fill is a row that is never updated or deleted.
+- Additive schema: `TradeOrder`, `TradeFill`, `RiskPolicy` and `TradeAuditLog` rows in `nova/models.py` (bootstrap adds them; no destructive migration).
+- An append-only trade audit log: every trading decision and refusal is a row that is never updated or deleted.
 - A global kill-switch admin toggle; when engaged, **every** trade tool refuses with a typed error, on every host.
 
 *Why it matters:* you cannot add safety to a live order after the fact. Audit and a kill-switch have to exist before the first order exists.
 
-### Phase 1 — Read-only market and account data
+### Phase 1 — Read-only market and account data *(implemented, read-only)*
+
+Landed: the three GET endpoints under both prefixes, normalized shapes, Binance and Coinbase Exchange adapters, per-client-key trading scopes, and the agent read tools. Coinbase positions and Binance spot positions return `positions_unsupported` (501); an unknown exchange returns `unsupported_exchange` (501).
 
 - Normalised gateway endpoints: `/v1/trading/quote`, `/v1/trading/positions`, `/v1/trading/balances` (also under `/api/v1/*`), one shape across exchanges.
 - New agent read tools in `nova/agent.py` (`ALLOWED_ACTIONS` + executors) so the agent can reason over the market before it can act on it.
@@ -482,7 +532,7 @@ Key environment variables (see `.env.example`):
 
 *Why it matters:* an agent that cannot read a balance or a quote cannot make a defensible decision, and read tools are harmless to expose first.
 
-### Phase 2 — Sandbox execution
+### Phase 2 — Sandbox execution *(not implemented)*
 
 - A paper-trading adapter that speaks the **exact same wire contract** as live, so the agent loop, the tools and the UI are developed against it unchanged.
 - A dry-run flag, mandatory by default; a sandbox order is recorded as a `TradeFill` with no upstream call.
@@ -515,7 +565,7 @@ Key environment variables (see `.env.example`):
 - Dashboards for P&L, exposure and rejected orders.
 - Exchange keys encrypted at rest under `NOVA_ENCRYPTION_KEY`.
 - 2FA required to enable live mode.
-- Per-client-key trading scopes, so a dashboard agent and an external client can hold different limits.
+- Per-client-key trading **limits** (beyond the read scopes shipped in Phase 1), so a dashboard agent and an external client can hold different limits.
 
 *Why it matters:* once real money and real API keys are on the box, key custody, a second factor and an exposure view stop being nice-to-haves.
 
@@ -528,16 +578,20 @@ terminal/          the ENTIRE terminal feature, one path, hostable on its own:
                    (in-process vs separately hosted) · api (the contract, mounted by
                    BOTH hosts) · agentbox (the AI agent) · web (the console page at `/`)
                    · service (the standalone host) · config · run.sh · Dockerfile
-nova/              config, SQLAlchemy models, bootstrap, engine sidecar client, live
-                   discovery, model sync, agent runtime, storage lib, MCP client +
-                   registry; the routing brain (routing / router_settings / profiles);
-                   the gateway control modules (auth / ratelimit / cache / session);
-                   the catalogue accessor (catalog / registry) and data/*.json
+nova/              config, SQLAlchemy models (incl. TradeOrder / TradeFill /
+                   RiskPolicy / TradeAuditLog), bootstrap, engine sidecar client,
+                   live discovery, model sync, agent runtime, storage lib, MCP
+                   client + registry; the routing brain (routing / router_settings
+                   / profiles); the gateway control modules (auth / ratelimit /
+                   cache / session); read-only trading (trading.py / trading_audit.py /
+                   trading_settings.py); the catalogue accessor (catalog / registry)
+                   and data/*.json
 routers/           gateway (/v1 + /api/v1, incl. openai_responses + the
-                   anthropic_adapter at /v1/messages), admin CRUD,
-                   admin_limits (usage / rate-limits / cache / sessions), terminal
-                   glue, compute, storage, agent, MCP registry, build APIs
-ui/                the Python frontend module — shell + 10 dashboard tabs, server-
+                   anthropic_adapter at /v1/messages + trading.py reads), admin CRUD,
+                   admin_limits (usage / rate-limits / cache / sessions), admin_trading.py
+                   (kill-switch / audit), terminal glue, compute, storage, agent,
+                   MCP registry, build APIs
+ui/                the Python frontend module — shell + 11 dashboard tabs, server-
                    rendered fragments consumed by HTMX (BFF over the JSON API);
                    tabs live in ui/tabs/ (incl. playground); /terminal is full-page
 templates/         Jinja2 templates (base shell, tab fragments, partials)
@@ -556,7 +610,7 @@ sh scripts/test.sh          # byte-compile → Python suite → Node test-runner
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Status: green — 333 tests, 0 failures, 0 errors, 32 skipped (the skips are POSIX-only PTY and file-mode tests, which do not run on Windows). Fully offline: provider protocol tests use `httpx.MockTransport`, and the gateway needs no keys. The Node suites (`tests/*.cjs`) cover dashboard navigation (`test_app_navigation.cjs`), the terminal workspace (`test_terminal_workspace.cjs`) and the standalone terminal console (`test_terminal_console.cjs`); `scripts/test.sh` runs them with `node --test` when Node is available.
+Status: green — 450 tests, 418 passed, 0 failures, 0 errors, 32 skipped (the skips are POSIX-only PTY and file-mode tests, which do not run on Windows). Fully offline: provider protocol tests use `httpx.MockTransport`, and the gateway needs no keys. The Node suites (`tests/*.cjs`) cover dashboard navigation (`test_app_navigation.cjs`), the terminal workspace (`test_terminal_workspace.cjs`) and the standalone terminal console (`test_terminal_console.cjs`); `scripts/test.sh` runs them with `node --test` when Node is available.
 
 ## 📄 License
 

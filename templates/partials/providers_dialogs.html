@@ -9,7 +9,7 @@
   <form id="np-add-form" autocomplete="off" class="p-5">
     <input type="hidden" name="kind" id="np-kind" value="openai" />
     <h3 id="np-add-title" class="text-base font-semibold text-slate-100">Add provider</h3>
-    <p id="np-add-desc" class="mt-0.5 text-xs text-slate-500">Choose an upstream protocol and endpoint. These are upstream providers, not client-facing gateway URLs.</p>
+    <p id="np-add-desc" class="mt-0.5 text-xs text-slate-500">Choose an upstream protocol and endpoint. Exchange presets are read-only trading connections with no model catalogue. These are upstream providers, not client-facing gateway URLs.</p>
 
     {# ----------------------------- step 1: preset grid ----------------------------- #}
     <div id="np-step-1" class="mt-3">
@@ -97,7 +97,7 @@
           <label for="np-url" class="text-xs text-slate-400">Base URL</label>
           <input id="np-url" name="base_url" type="url" placeholder="https://api.provider.com/v1" required inputmode="url" aria-describedby="np-url-help"
             class="h-8 w-full rounded border border-slate-800 bg-black/30 px-2 font-mono text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-emerald-500/50" />
-          <p id="np-url-help" class="text-[11px] text-slate-500">Use the upstream API root, not a full operation path.</p>
+          <p id="np-url-help" class="text-[11px] text-slate-500">Use the upstream API root, not a full operation path. For an exchange, enter the exchange API root (for example https://api.binance.com).</p>
         </div>
       </div>
 
@@ -239,8 +239,9 @@
 
   function npChoosePreset(btn) {
     var custom = btn.dataset.custom === '1';
+    var kind = custom ? 'openai' : (btn.dataset.kind || 'openai');
     var set = function (id, v) { var el = $(id); if (el) el.value = v; };
-    set('np-kind', custom ? 'openai' : (btn.dataset.kind || 'openai'));
+    set('np-kind', kind);
     set('np-name', custom ? '' : (btn.dataset.name || ''));
     set('np-url', custom ? '' : (btn.dataset.baseUrl || ''));
     set('np-prefix', custom ? '' : (btn.dataset.prefix || ''));
@@ -249,14 +250,18 @@
     set('np-docs', btn.dataset.docsUrl || '');
     var url = $('np-url');
     if (url) {
-      url.placeholder = btn.dataset.urlHint || (btn.dataset.kind === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.provider.com/v1');
-      url.required = (btn.dataset.kind || 'openai') !== 'builtin';
+      url.placeholder = btn.dataset.urlHint || (kind === 'anthropic'
+        ? 'https://api.anthropic.com'
+        : kind === 'exchange' ? 'https://api.exchange.com' : 'https://api.provider.com/v1');
+      url.required = kind !== 'builtin';
       url.type = url.required ? 'url' : 'text';
     }
     var guide = $('np-protocol');
-    if (guide) guide.textContent = btn.dataset.guidance || (btn.dataset.kind === 'anthropic'
+    if (guide) guide.textContent = btn.dataset.guidance || (kind === 'anthropic'
       ? 'Native Anthropic Messages API: enter the origin without /v1. It is not an OpenAI-compatible endpoint.'
-      : 'OpenAI-compatible API: enter the root URL, usually ending in /v1. RouterX appends /models and /chat/completions.');
+      : kind === 'exchange'
+        ? 'Read-only exchange API: enter the exchange API root (for example https://api.binance.com), never a /quote, /positions or /ticker endpoint. Exchange credentials are used only by the trading namespace; no /models or chat request is ever sent.'
+        : 'OpenAI-compatible API: enter the root URL, usually ending in /v1. RouterX appends /models and /chat/completions.');
     var pr = btn.dataset.priority || '50';
     set('np-priority', pr);
     var pv = $('np-priority-val'); if (pv) pv.textContent = pr;
@@ -283,7 +288,7 @@
 
   function npValidateEndpoint(form) {
     var kind = form.elements.kind.value;
-    if (kind !== 'openai' && kind !== 'anthropic') return '';
+    if (kind !== 'openai' && kind !== 'anthropic' && kind !== 'exchange') return '';
     var raw = form.elements.base_url.value.trim();
     if (!raw) return 'Enter the upstream base URL.';
     var url;
@@ -291,8 +296,13 @@
     if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password || url.search || url.hash) {
       return 'Use an HTTP(S) base URL without credentials, query parameters or fragments.';
     }
-    if (/(?:\/models|\/chat\/completions|\/messages)\/?$/i.test(url.pathname)) {
-      return 'Enter the API root, not a /models, /messages or /chat/completions operation URL.';
+    var endpointPattern = kind === 'exchange'
+      ? /(?:\/models|\/chat\/completions|\/messages|\/embeddings|\/quote|\/positions|\/balances|\/ticker)\/?$/i
+      : /(?:\/models|\/chat\/completions|\/messages)\/?$/i;
+    if (endpointPattern.test(url.pathname)) {
+      return kind === 'exchange'
+        ? 'Enter the exchange API root, not a trading or model operation URL.'
+        : 'Enter the API root, not a /models, /messages or /chat/completions operation URL.';
     }
     if (kind === 'anthropic' && /\/v1\/?$/i.test(url.pathname)) {
       return 'Native Anthropic uses the origin without /v1 (https://api.anthropic.com).';
@@ -377,7 +387,17 @@
         window.__npCreating = false;
         return;
       }
-      if (data.stream) npStreamSync(data);
+      if (data.sync_skipped) {
+        npStep(3);
+        var skipDesc = $('np-add-desc');
+        if (skipDesc) skipDesc.textContent = 'Exchange provider saved — read-only, with no model catalogue. No /models or chat request is sent.';
+        var skipStatus = $('np-sync-status');
+        if (skipStatus) { skipStatus.textContent = 'saved'; skipStatus.className = 'ml-auto font-mono text-[11px] text-green-300'; }
+        var skipLog = $('np-sync-log');
+        if (skipLog) skipLog.textContent = 'Exchange provider saved. ' + data.sync_skipped + '. No /models or chat request is sent for exchange providers.';
+        NovaUI.toast('Provider added — ' + data.sync_skipped + '.', 'success');
+        NovaUI.refresh(); window.__npCreating = false;
+      } else if (data.stream) npStreamSync(data);
       else {
         npStep(3);
         var status = $('np-sync-status'); if (status) status.textContent = 'status unavailable';

@@ -8,6 +8,7 @@
 - **100% Python (FastAPI + Jinja2 + HTMX).** No Next.js/React/Prisma anywhere.
 - `worklog.md` + `agent-ctx/api-contract.md` are a **historical Next.js rebuild** used as an API-shape reference only — their paths (`src/app/api/**`) do not exist. Python equivalents: `project-map.md`.
 - **No third-party attribution.** RouterX is its own design. Do not name other projects in docs/UI. The catalogue is curated (`nova/data/provider_registry.json`, `base_url` is always an API root).
+- **Trading Phase 0/1 is implemented (read-only).** `exchange` providers, additive trade tables, an append-only audit, a global kill-switch, scoped quote/positions/balances reads and agent read tools exist. Exchange providers must never enter the LLM chat/fallback path, and no order execution exists.
 
 ## What RouterX is
 
@@ -18,9 +19,9 @@ Self-hosted AI gateway: fans requests across providers (keyless/free included) w
 | Path | Role |
 | --- | --- |
 | `main.py` | Entrypoint: lifespan (bootstrap, engine sidecar, maintenance), CORS, `/health`, router mounting, request-log middleware |
-| `nova/` | Core: config, models, bootstrap, engine client, transport, discovery/sync, agent, storage, routing brain (`routing`, `router_settings`, `profiles`), gateway control (`auth`, `ratelimit`, `cache`, `session`), catalogue (`catalog`, `registry`, `data/*.json`) |
+| `nova/` | Core: config, models, bootstrap, engine client, transport, discovery/sync, agent, storage, routing brain (`routing`, `router_settings`, `profiles`), gateway control (`auth`, `ratelimit`, `cache`, `session`), read-only trading (`trading.py`, `trading_audit.py`, `trading_settings.py`), catalogue (`catalog`, `registry`, `data/*.json`) |
 | `terminal/` | Whole terminal feature, self-contained (no nova import, no DB): `pty.py`, `sandbox.py`, `link.py`, `api.py` (shared contract), `agentbox.py` (`/agent/*`), `web/`, `service.py`, `config.py`, `Dockerfile` |
-| `routers/` | `gateway.py` (`/v1` + `/api/v1`, incl. `openai_responses.py`), `admin_*.py` (`/api/admin`, incl. `admin_limits.py`), `agent_api.py`, `anthropic_adapter.py`. `admin_terminal.py` = dashboard glue only |
+| `routers/` | `gateway.py` (`/v1` + `/api/v1`, incl. `openai_responses.py` + `trading.py`), `admin_*.py` (`/api/admin`, incl. `admin_limits.py`, `admin_trading.py`), `agent_api.py`, `anthropic_adapter.py`. `admin_terminal.py` = dashboard glue only |
 | `ui/` | BFF frontend: `shell.py`, `tabs/` (11 tab modules incl. `playground.py`), `api_client.py`, `render.py`, `format.py` |
 | `templates/` | Jinja2: `base.html`, `tabs/<key>.html`, `partials/*.html` |
 | `static/` | `nova.css`, `nova-world.css` (Dark AI World layer), `app.js` (only hand-written app JS), `terminal_workspace.js`, `logo.svg` |
@@ -29,7 +30,7 @@ Self-hosted AI gateway: fans requests across providers (keyless/free included) w
 
 ## Architecture in one paragraph
 
-`main.py` boots FastAPI → lifespan runs `nova/bootstrap.py` (additive schema sync + seed of the curated catalogue) and starts the engine sidecar (`nova/engine.py`) → gateway routes pass through `nova/auth.py` `gateway_auth` → `routers/gateway.py` resolves virtual ids (`auto`, `auto:<profile>` via `nova/profiles.py`), asks `nova/routing.py` to order the candidate pool (policy engine → exposure lists → tag routing → per-(provider, model) lockouts/usage caps → strategy), applies sticky-session reorder (`nova/session.py`), then walks it as a fallback chain (direct → chain → RouterX Free engine last), calling upstreams through `nova/provider_transport.py` + pooled `httpx`; key cooldowns/usage booking via `nova/ratelimit.py`; optional `nova/cache.py`. Response `model` is spoofed to the requested id, truth in `_nova`, every request logged to `RequestLog` (with `ttftMs`). Dashboard: server-rendered Jinja2 fragments swapped by HTMX, each tab calling the app's own JSON API (`ui/api_client.py`). `nova/agent.py` runs plan→tool→step loops. `terminal/` never imports `nova/`.
+`main.py` boots FastAPI → lifespan runs `nova/bootstrap.py` (additive schema sync + seed of the curated catalogue) and starts the engine sidecar (`nova/engine.py`) → gateway routes pass through `nova/auth.py` `gateway_auth` → `routers/gateway.py` resolves virtual ids (`auto`, `auto:<profile>` via `nova/profiles.py`), asks `nova/routing.py` to order the candidate pool (policy engine → exposure lists → tag routing → per-(provider, model) lockouts/usage caps → strategy), applies sticky-session reorder (`nova/session.py`), then walks it as a fallback chain (direct → chain → RouterX Free engine last), calling upstreams through `nova/provider_transport.py` + pooled `httpx`; key cooldowns/usage booking via `nova/ratelimit.py`; optional `nova/cache.py`. Response `model` is spoofed to the requested id, truth in `_nova`, every request logged to `RequestLog` (with `ttftMs`). Dashboard: server-rendered Jinja2 fragments swapped by HTMX, each tab calling the app's own JSON API (`ui/api_client.py`). `nova/agent.py` runs plan→tool→step loops. `terminal/` never imports `nova/`. Trading is a separate terminal namespace (quotes/positions/balances): gateway auth -> client-key trading scope -> kill-switch -> exactly one exchange adapter -> typed result, with `RequestLog` + append-only `TradeAuditLog`; it never touches `nova/routing.py`, auto stand-ins or the fallback chain.
 
 ## Non-negotiable conventions
 
@@ -44,6 +45,11 @@ Self-hosted AI gateway: fans requests across providers (keyless/free included) w
 9. **Tests**: `sh scripts/test.sh` (compileall → `python3 -m unittest discover -s tests -p 'test_*.py'` → `.cjs` suites). Fast lint: `python3 -m compileall -q main.py nova routers ui terminal`. Offline; MockTransport.
 10. **Terminal duality**: command exec = `terminal/sandbox.py` (simulated, no subprocess); session tabs = `terminal/pty.py` (real PTY, max 8, 30-min reap). Don't mix them.
 11. **Terminal is one path**: all terminal code in `terminal/`, imported as `terminal.*`, importing **nothing** from `nova/` (except `sandbox.py`, guarded by `APP_AVAILABLE`). Hostable alone (`python3 -m terminal.service`, `docker build ./terminal`).
+12. **Trading is a terminal stage.** Never route a trading read (or a future order) through `nova/routing.py`, the fallback chain, auto stand-ins, or a retry across exchanges. One request resolves exactly one configured exchange; a failure is a typed decision.
+13. **Kill-switch first.** Every trading entry point calls `nova.trading.ensure_trading_enabled` before any exchange I/O; when halted it raises typed `trading_disabled` (503).
+14. **Audit is append-only.** Every trading decision writes a `TradeAuditLog` row via `nova/trading_audit.py`; ORM UPDATE/DELETE raise `TradeAuditImmutable` and no update/delete API exists.
+15. **`exchange` is trading-only.** The provider kind is excluded from every LLM/chat/model path, including `/v1/models`, discovery, sync and auto stand-ins. Provider Test is configuration-only.
+16. **Trading scopes are fail-closed.** Trading requires an explicit `ClientKey` with `tradingScopes`; empty scopes deny, even on a fail-open text install. `trading:read` is the umbrella over the per-read scopes.
 
 ## Where to add things
 
@@ -57,3 +63,7 @@ Self-hosted AI gateway: fans requests across providers (keyless/free included) w
 - Agent tool → `nova/agent.py` `ALLOWED_ACTIONS` + executor + `routers/agent_api.py` list.
 - Provider/model source → `nova/data/*.json` behind `nova/catalog.py`, validated by `nova/registry.py` (`base_url` = API root).
 - Recipes with skeletons → `agent-ctx/recipes.md`.
+- New exchange adapter → `nova/trading.py` (read-only adapter + typed `TradingError`); never add it to the chat pipeline or fallback chain.
+- Trading gateway endpoint → `routers/trading.py`, included at the bottom of `routers/gateway.py`.
+- Trading admin knob → `routers/admin_trading.py` + `nova/trading_settings.py` (`SystemConfig` key `trading_settings`).
+- Trading agent tool → `nova/agent.py` `ALLOWED_ACTIONS` + executor + prompt, surfaced in `routers/agent_api.py` `TOOLS`.

@@ -30,6 +30,12 @@
         class="w-full rounded-md border border-slate-800 bg-[#050505] px-2.5 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none" />
       <p class="text-[11px] text-slate-500">Use * to allow every enabled model.</p>
     </div>
+    <div class="space-y-1.5">
+      <label for="ck-trading-scopes" class="text-xs font-medium text-slate-300">Trading scopes</label>
+      <input id="ck-trading-scopes" name="trading_scopes" type="text" placeholder="blank = no trading &#183; trading:read" autocomplete="off"
+        class="w-full rounded-md border border-slate-800 bg-[#050505] px-2.5 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none" />
+      <p class="text-[11px] text-slate-500">Blank denies trading. Use trading:read for all read endpoints, or trading:quote / trading:positions / trading:balances.</p>
+    </div>
     <div class="grid grid-cols-2 gap-3">
       <div class="space-y-1.5">
         <label for="ck-rpm" class="text-xs font-medium text-slate-300">RPM limit</label>
@@ -95,6 +101,12 @@
       <label for="ek-models" class="text-xs font-medium text-slate-300">Allowed models</label>
       <input id="ek-models" name="allowed_models" type="text" autocomplete="off"
         class="w-full rounded-md border border-slate-800 bg-[#050505] px-2.5 py-2 font-mono text-xs text-slate-100 focus:border-emerald-500/50 focus:outline-none" />
+    </div>
+    <div class="space-y-1.5">
+      <label for="ek-trading-scopes" class="text-xs font-medium text-slate-300">Trading scopes</label>
+      <input id="ek-trading-scopes" name="trading_scopes" type="text" placeholder="blank = no trading &#183; trading:read" autocomplete="off"
+        class="w-full rounded-md border border-slate-800 bg-[#050505] px-2.5 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none" />
+      <p class="text-[11px] text-slate-500">Blank denies trading. Use trading:read for all read endpoints, or trading:quote / trading:positions / trading:balances.</p>
     </div>
     <div class="grid grid-cols-2 gap-3">
       <div class="space-y-1.5">
@@ -240,6 +252,7 @@
       editForm.elements.key_id.value = d.keyId || '';
       editForm.elements.name.value = d.keyName || '';
       editForm.elements.allowed_models.value = d.keyModels || '*';
+      editForm.elements.trading_scopes.value = d.keyScopes || '';
       editForm.elements.rpm_limit.value = d.keyRpm || '0';
       editForm.elements.tpd_limit.value = d.keyTpd || '0';
       document.getElementById('keys-edit-desc').textContent = 'Tighten or relax rate and daily token limits for ' + (d.keyName || 'this key') + '.';

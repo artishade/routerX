@@ -8,6 +8,7 @@ Fragments:
 Actions (HTMX mutations → html(..., toast=..., refresh=True)):
   POST /ui/providers/create         preset-based create (auto-sync surfaced)
   POST /ui/providers/toggle         enabled switch (PATCH)
+  POST /ui/providers/trading-kill-switch  Phase 0 trading kill-switch (engage/release)
   POST /ui/providers/priority       priority edit (PATCH)
   POST /ui/providers/test           real connectivity probe (JSON — consumed by
                                     the inline Test / Test All JS sweep)
@@ -61,7 +62,7 @@ def _form_str(form: dict, key: str) -> str:
 
 def _endpoint_error(kind: str, base_url: str) -> str | None:
     """Validate upstream roots without restricting the other supported provider kinds."""
-    if kind not in ("openai", "anthropic"):
+    if kind not in ("openai", "anthropic", "exchange"):
         return None
     if not base_url:
         return "Enter the upstream base URL"
@@ -73,7 +74,13 @@ def _endpoint_error(kind: str, base_url: str) -> str | None:
             return "Use an HTTP(S) base URL without credentials, query parameters or fragments"
     except ValueError:
         return "Enter a valid HTTP(S) upstream base URL"
-    if re.search(r"/(?:models|chat/completions|messages)/?$", url.path, re.I):
+    suffixes = r"/(?:models|chat/completions|messages"
+    if kind == "exchange":
+        suffixes += r"|embeddings|quote|positions|balances|ticker"
+    suffixes += r")/?$"
+    if re.search(suffixes, url.path, re.I):
+        if kind == "exchange":
+            return "Enter the exchange API root, not a trading or model operation URL"
         return "Enter the API root, not a /models, /messages or /chat/completions operation URL"
     if kind == "anthropic" and re.search(r"/v1/?$", url.path, re.I):
         return "Native Anthropic uses the origin without /v1 (https://api.anthropic.com)"
@@ -131,11 +138,11 @@ async def _providers_ctx(request: Request) -> dict:
     # All reads are independent; expanded keys are optional and still render
     # empty if the provider list itself fails.
     reads = [api.get("/api/admin/providers"), api.get("/api/admin/stats"),
-             api.get("/api/admin/meta")]
+             api.get("/api/admin/meta"), api.get("/api/admin/trading")]
     if expand:
         reads.append(api.get("/api/admin/keys", params={"provider_id": expand}))
     results = await asyncio.gather(*reads, return_exceptions=True)
-    provider_result, stats, meta = results[:3]
+    provider_result, stats, meta, trading_result = results[:4]
     rows: list[dict] = []
     keys: list[dict] = []
     error: str | None = None
@@ -149,18 +156,27 @@ async def _providers_ctx(request: Request) -> dict:
         stats = None
     if isinstance(meta, BaseException):
         meta = None
-    if expand and not error and not isinstance(results[3], BaseException):
-        keys = results[3]
+    # The kill-switch is an optional control: a missing/odd trading payload
+    # must never take the provider list down with it.
+    trading: dict | None = None
+    payload = trading_result if isinstance(trading_result, dict) else {}
+    if isinstance(payload.get("trading"), dict):
+        trading = payload["trading"]
+    if expand and not error and not isinstance(results[4], BaseException):
+        keys = results[4]
 
     visible = _filter_providers(rows, q)
     visible_total = len(visible)
     # A curated deployment shows every provider; if rows were added past the
     # cap the header says "N of M" and search narrows to anything past it.
     visible = [_decorate(p, q, expand) for p in visible[:PROVIDER_PAGE_SIZE]]
-    # "Test All" targets — same rule as ProvidersTab.tsx (enabled + has keys or builtin).
+    # "Test All" targets — same rule as ProvidersTab.tsx (enabled + has keys or
+    # builtin). An exchange has no /models probe, so it is tested from its card
+    # only and never swept into an OpenAI-style catalogue test.
     test_ids = [
         p["id"] for p in rows
-        if p.get("enabled") and (p.get("key_count", 0) > 0 or p.get("kind") == "builtin")
+        if p.get("enabled") and p.get("kind") != "exchange"
+        and (p.get("key_count", 0) > 0 or p.get("kind") == "builtin")
     ]
 
     return {
@@ -177,6 +193,7 @@ async def _providers_ctx(request: Request) -> dict:
         "error": error,
         "stats": stats,
         "meta": meta,
+        "trading": trading,
         "now_ms": time.time() * 1000,
     }
 
@@ -345,14 +362,18 @@ async def create_provider(request: Request) -> Response:
         return _form_error(msg)
 
     if logs_mode:
-        return JSONResponse({
+        payload = {
             "ok": True,
             "id": res.get("id"),
             "name": name,
             "keys_added": res.get("keys_added", 0),
+            "models_added": res.get("models_added", 0),
             "job": res.get("job"),
             "stream": res.get("stream"),
-        })
+        }
+        if res.get("sync_skipped"):
+            payload["sync_skipped"] = res["sync_skipped"]
+        return JSONResponse(payload)
 
     keys_added = res.get("keys_added", 0)
     models_added = res.get("models_added") or 0
@@ -415,6 +436,25 @@ async def set_priority(request: Request) -> HTMLResponse:
         return _toast(message=f"Failed to update provider ({e.__class__.__name__})", ttype="error")
     name = await _provider_name(pid)
     return _toast(message=f"{name} priority set to {priority}")
+
+
+@router.post("/ui/providers/trading-kill-switch")
+async def providers_trading_kill_switch(request: Request) -> HTMLResponse:
+    """Engage/release the Phase 0 trading kill-switch (no confirmation on purpose)."""
+    form = await form_dict(request)
+    engaged = truthy(form.get("kill_switch"))
+    try:
+        await api.post("/api/admin/trading", json={"kill_switch": engaged})
+    except ApiError as err:
+        return _toast(message=err.message, ttype="error", refresh=True)
+    except Exception:
+        return _toast(message="Could not update the trading kill-switch", ttype="error", refresh=True)
+    return _toast(
+        message=("Trading kill-switch ENGAGED — all trading requests will be refused" if engaged
+                 else "Trading kill-switch released"),
+        ttype="error" if engaged else "success",
+        refresh=True,
+    )
 
 
 @router.post("/ui/providers/test")

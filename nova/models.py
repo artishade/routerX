@@ -36,7 +36,7 @@ class Provider(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     key: Mapped[str] = mapped_column(String, unique=True)
     name: Mapped[str] = mapped_column(String)
-    kind: Mapped[str] = mapped_column(String, default="openai")  # openai|anthropic|gemini|builtin
+    kind: Mapped[str] = mapped_column(String, default="openai")  # openai|anthropic|gemini|builtin|exchange
     baseUrl: Mapped[str] = mapped_column(String, default="")
     prefix: Mapped[str] = mapped_column(String, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -120,6 +120,8 @@ class ClientKey(Base):
     token: Mapped[str] = mapped_column(String, unique=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     allowedModels: Mapped[str] = mapped_column(String, default="*")
+    # Comma/space list of trading scopes; empty means NO trading access.
+    tradingScopes: Mapped[str] = mapped_column(String, default="")
     rpmLimit: Mapped[int] = mapped_column(Integer, default=60)
     tpdLimit: Mapped[int] = mapped_column(Integer, default=0)
     tokensIn: Mapped[int] = mapped_column(Integer, default=0)
@@ -313,8 +315,118 @@ class UsageWindow(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class TradeOrder(Base):
+    """One order intent and its lifecycle state.
+
+    `providerId` / `clientKeyId` are plain ints on purpose: deleting a provider
+    or a client key must never cascade into trading history.
+    """
+
+    __tablename__ = "TradeOrder"
+    __table_args__ = (
+        Index("TradeOrder_clientOrderId_idx", "clientOrderId"),
+        Index("TradeOrder_createdAt_idx", "createdAt"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    publicId: Mapped[str] = mapped_column(String, unique=True)
+    clientOrderId: Mapped[str] = mapped_column(String, default="")
+    exchange: Mapped[str] = mapped_column(String, default="")
+    providerId: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    symbol: Mapped[str] = mapped_column(String)
+    side: Mapped[str] = mapped_column(String)  # buy|sell
+    orderType: Mapped[str] = mapped_column(String, default="market")
+    quantity: Mapped[float] = mapped_column(Float, default=0)
+    notional: Mapped[float] = mapped_column(Float, default=0)
+    limitPrice: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # intent|submitted|partial|filled|rejected|cancelled|failed
+    status: Mapped[str] = mapped_column(String, default="intent")
+    mode: Mapped[str] = mapped_column(String, default="sandbox")  # sandbox|live
+    reason: Mapped[str] = mapped_column(String, default="")
+    clientKeyId: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The declarative API reserves `metadata`; the DB column keeps the name.
+    metadata_: Mapped[str] = mapped_column("metadata", Text, default="{}")
+    createdAt: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updatedAt: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TradeFill(Base):
+    """An execution (full or partial) reported by an exchange."""
+
+    __tablename__ = "TradeFill"
+    __table_args__ = (
+        Index("TradeFill_orderPublicId_idx", "orderPublicId"),
+        Index("TradeFill_createdAt_idx", "createdAt"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    orderPublicId: Mapped[str] = mapped_column(String, default="")
+    exchange: Mapped[str] = mapped_column(String, default="")
+    symbol: Mapped[str] = mapped_column(String)
+    side: Mapped[str] = mapped_column(String, default="")
+    quantity: Mapped[float] = mapped_column(Float, default=0)
+    price: Mapped[float] = mapped_column(Float, default=0)
+    fee: Mapped[float] = mapped_column(Float, default=0)
+    feeAsset: Mapped[str] = mapped_column(String, default="")
+    upstreamFillId: Mapped[str] = mapped_column(String, default="")
+    mode: Mapped[str] = mapped_column(String, default="")
+    createdAt: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class RiskPolicy(Base):
+    """Operator-defined guardrail evaluated before an order can leave."""
+
+    __tablename__ = "RiskPolicy"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # slug
+    name: Mapped[str] = mapped_column(String)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    maxOrderNotional: Mapped[float] = mapped_column(Float, default=0)
+    dailyLossCap: Mapped[float] = mapped_column(Float, default=0)
+    allowedSymbols: Mapped[str] = mapped_column(Text, default="[]")
+    maxOpenOrders: Mapped[int] = mapped_column(Integer, default=0)
+    # The declarative API reserves `metadata`; the DB column keeps the name.
+    metadata_: Mapped[str] = mapped_column("metadata", Text, default="{}")
+    createdAt: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updatedAt: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TradeAuditLog(Base):
+    """Append-only trading audit trail. ORM update/delete is blocked in
+    nova/trading_audit.py; rows are written by every trading decision path."""
+
+    __tablename__ = "TradeAuditLog"
+    __table_args__ = (
+        Index("TradeAuditLog_ts_idx", "ts"),
+        Index("TradeAuditLog_event_idx", "event"),
+        Index("TradeAuditLog_orderPublicId_idx", "orderPublicId"),
+        Index("TradeAuditLog_clientKeyId_idx", "clientKeyId"),
+        Index("TradeAuditLog_exchange_idx", "exchange"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # intent|refusal|submission|fill|read|kill_switch|cancel
+    event: Mapped[str] = mapped_column(String)
+    action: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="")
+    code: Mapped[str] = mapped_column(String, default="")
+    actor: Mapped[str] = mapped_column(String, default="")  # gateway|agent|admin|system
+    clientKeyId: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    providerId: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    providerKey: Mapped[str] = mapped_column(String, default="")
+    exchange: Mapped[str] = mapped_column(String, default="")
+    symbol: Mapped[str] = mapped_column(String, default="")
+    orderPublicId: Mapped[str] = mapped_column(String, default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    mode: Mapped[str] = mapped_column(String, default="")
+
+
 ALL_TABLES = [
     Provider, ProviderKey, Model, ModelRoute, ClientKey, RequestLog,
     TerminalCommand, SystemConfig, StorageProviderRow, StorageFile,
     AgentTask, AgentStep, ProviderSession, McpServer, UsageWindow,
+    TradeOrder, TradeFill, RiskPolicy, TradeAuditLog,
 ]

@@ -97,6 +97,32 @@ with the user before overriding, or add a new dated entry explaining the pivot.
   so an unknown strategy is dropped at write time rather than turning a request
   into a runtime surprise.
 
+## 2026-10-29 — Trading Phase 0/1 landed read-only; execution stays Phase 2+
+- **Phase 0 is implemented, not a plan.** The `exchange` provider kind, the
+  additive `TradeOrder` / `TradeFill` / `RiskPolicy` / `TradeAuditLog` tables,
+  the append-only audit (`nova/trading_audit.py`) and the global kill-switch
+  (`nova/trading_settings.py`) are in the tree. No destructive migration was
+  needed.
+- **Phase 1 is read-only on purpose.** The gateway serves `GET
+  /v1/trading/quote|positions|balances` (also under `/api/v1`) through
+  `routers/trading.py`, backed by Binance and Coinbase Exchange adapters in
+  `nova/trading.py`. Coinbase positions and Binance spot positions answer a
+  typed `positions_unsupported` (501) rather than pretending; an unknown
+  exchange is `unsupported_exchange` (501).
+- **Reads obey the terminal-stage rule.** Exactly one configured exchange per
+  read: no `nova/routing.py`, no auto stand-ins, no retry across providers. A
+  failure is a typed `trading_error` decision.
+- **The kill-switch gates every entry point.** Gateway reads and agent tools call
+  `ensure_trading_enabled` before any exchange I/O; when halted they refuse with
+  `trading_disabled` (503). The audit trail is append-only and exposed read-only.
+- **Trading scopes are fail-closed.** `ClientKey.tradingScopes` defaults to
+  empty (no access), even on a fail-open text install. `trading:read` is the
+  umbrella over `trading:quote` / `trading:positions` / `trading:balances`.
+- **Order execution remains Phase 2+.** No create, submit or update endpoint or
+  agent action exists; paper/sandbox and live execution are not built. The
+  2026-10-28 terminal-stage decision still stands and will govern any future
+  order write.
+
 ## 2026-10-28 — A trade stage is terminal: trading breaks the fallback invariant on purpose
 - **The fallback chain assumes a call is safe to repeat.** Text generation is:
   a second provider returning the same content costs nothing but a retry.

@@ -23,6 +23,41 @@
       hx-sync="this:replace" hx-trigger="input delay:350ms"
       hx-target="#providers-results" hx-swap="innerHTML"
       class="h-9 w-48 rounded-md border border-slate-800 bg-black/30 px-2.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-emerald-500/50" />
+    {% if trading %}
+    <div class="flex flex-wrap items-center gap-1.5">
+      {% if trading.kill_switch %}
+      <span class="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-900/70 bg-rose-950/40 px-2.5 text-[11px] font-medium text-rose-300"
+        title="All /v1/trading/* and agent trading tools refuse with trading_disabled">
+        <i data-lucide="shield-off" class="size-3.5" aria-hidden="true"></i>
+        Trading halted
+      </span>
+      {% else %}
+      <span class="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-900/70 bg-green-950/30 px-2.5 text-[11px] font-medium text-green-300"
+        title="Trading requests are accepted and routed to exchange providers">
+        <i data-lucide="shield-check" class="size-3.5" aria-hidden="true"></i>
+        Trading armed
+        <span class="font-normal text-green-400/70">({{ trading.exchange_providers }} exchange{{ 's' if trading.exchange_providers != 1 else '' }})</span>
+      </span>
+      {% endif %}
+      {# No hx-confirm on purpose: an operator must be able to halt trading in one click. #}
+      <form hx-post="/ui/providers/trading-kill-switch" hx-swap="none" class="inline-flex">
+        <input type="hidden" name="kill_switch" value="{{ 'false' if trading.kill_switch else 'true' }}" />
+        {% if trading.kill_switch %}
+        <button type="submit" hx-disabled-elt="this" aria-label="Release the trading kill-switch"
+          class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 transition-colors hover:bg-slate-800 disabled:opacity-50">
+          <i data-lucide="shield-check" class="size-3.5" aria-hidden="true"></i>
+          Release kill-switch
+        </button>
+        {% else %}
+        <button type="submit" hx-disabled-elt="this" aria-label="Engage the trading kill-switch"
+          class="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-900/70 px-2.5 text-xs text-rose-300 transition-colors hover:bg-rose-950/50 disabled:opacity-50">
+          <i data-lucide="shield-off" class="size-3.5" aria-hidden="true"></i>
+          Engage kill-switch
+        </button>
+        {% endif %}
+      </form>
+    </div>
+    {% endif %}
     <button type="button" data-test-all data-ids="{{ test_ids | join(',') }}"
       class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs text-slate-300 transition-colors hover:bg-slate-800">
       <i data-lucide="zap" class="size-3.5"></i>

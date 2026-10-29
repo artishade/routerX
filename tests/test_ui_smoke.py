@@ -63,7 +63,7 @@ META = {
     "cache": {"ttl": 600, "max_entries": 1000},
     "limits": {"file_max_mb": 25, "batch_max_items": 50000},
     "presets": [{"key": "groq", "name": "Groq", "kind": "openai"}],
-    "kinds": ["openai", "anthropic", "gemini", "builtin"],
+    "kinds": ["openai", "anthropic", "gemini", "builtin", "exchange"],
     "statuses": ["healthy", "cooling", "dead", "unknown"],
     "profiles": [],
 }

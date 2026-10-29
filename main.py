@@ -360,6 +360,7 @@ from routers import (  # noqa: E402
     admin_routing,
     admin_storage,
     admin_terminal,
+    admin_trading,
     agent_api,
     build_api,
     gateway,
@@ -378,6 +379,7 @@ admin_router.include_router(admin_storage.router, prefix="/storage", tags=["stor
 admin_router.include_router(admin_mcp.router, prefix="/mcp", tags=["mcp"])
 admin_router.include_router(admin_misc.router, tags=["misc"])
 admin_router.include_router(admin_limits.router, tags=["limits"])
+admin_router.include_router(admin_trading.router, prefix="/trading", tags=["trading"])
 
 # Permanent cloud build config (Root@Build terminal) — providers, tool registry.
 build_router = APIRouter(prefix="/api/build")

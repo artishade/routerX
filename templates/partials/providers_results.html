@@ -27,7 +27,11 @@
         {# ------------------------------ card header ------------------------------ #}
         <div class="flex flex-wrap items-center gap-2">
           <span class="text-sm font-semibold text-slate-100">{{ p.name }}</span>
+          {% if p.kind == 'exchange' %}
+          <span class="inline-flex items-center rounded-md border border-amber-800/70 px-1.5 py-0.5 text-[10px] text-amber-300" title="Read-only exchange API (trading namespace)">Exchange (read-only)</span>
+          {% else %}
           <span class="inline-flex items-center rounded-md border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400" title="{{ 'Native Anthropic Messages API' if p.kind == 'anthropic' else 'OpenAI-compatible API' if p.kind == 'openai' else p.kind }}">{{ 'Anthropic native' if p.kind == 'anthropic' else 'OpenAI-compatible' if p.kind == 'openai' else p.kind }}</span>
+          {% endif %}
           <details class="np-menu relative inline-block">
             <summary title="Routing priority (lower = tried earlier)"
               class="inline-flex cursor-pointer list-none items-center rounded-md border border-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 hover:text-slate-300">P{{ p.priority }}</summary>
